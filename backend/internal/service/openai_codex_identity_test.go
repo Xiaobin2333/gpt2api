@@ -165,7 +165,7 @@ func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
 	// 陈旧覆写 UA 同样跟随自动同步到的新版本，无需管理员重新编辑那条 UA。
 	t.Run("陈旧覆写 UA 跟随同步版本", func(t *testing.T) {
 		SetCodexCanonicalUserAgentResolver(func() string {
-			return "codex_cli_rs/0.200.1" + codexCLIUserAgentSuffix
+			return "codex_cli_rs/0.200.1" + codexCLIUserAgentSuffix + " (codex_cli_rs; 0.200.1)"
 		})
 		t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
@@ -317,7 +317,7 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 }
 
 func TestBuildCodexCLIUserAgent(t *testing.T) {
-	require.Equal(t, openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix, buildCodexCLIUserAgent("0.200.1"))
+	require.Equal(t, openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix+" ("+openai.CodexDefaultOriginator+"; 0.200.1)", buildCodexCLIUserAgent("0.200.1"))
 	// 非法版本号必须回退到内置 UA，不能拼出畸形身份。
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent("bogus version"))
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent(""))
@@ -325,17 +325,17 @@ func TestBuildCodexCLIUserAgent(t *testing.T) {
 
 func TestCodexCanonicalUserAgentFollowsResolver(t *testing.T) {
 	SetCodexCanonicalUserAgentResolver(func() string {
-		return "codex_cli_rs/0.200.1" + codexCLIUserAgentSuffix
+		return "codex_cli_rs/0.200.1" + codexCLIUserAgentSuffix + " (codex_cli_rs; 0.200.1)"
 	})
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
-	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix, CodexCanonicalUserAgent())
+	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix+" (codex_cli_rs; 0.200.1)", CodexCanonicalUserAgent())
 	require.Equal(t, "0.200.1", CodexCanonicalClientVersion())
 
 	h := make(http.Header)
 	ApplyCodexCanonicalAuthIdentity(h)
 	require.Equal(t, "codex_cli_rs", h.Get("originator"))
-	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix, h.Get("user-agent"))
+	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix+" (codex_cli_rs; 0.200.1)", h.Get("user-agent"))
 	// 凭据面不发 version 头（真实客户端在 auth.openai.com 只带 originator + UA）。
 	require.Empty(t, h.Get("version"))
 }
