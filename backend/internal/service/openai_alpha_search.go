@@ -238,11 +238,6 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
 	canonical := resolveCodexOutboundIdentity("")
-	if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-		req.Header.Set("Version", version)
-	} else {
-		req.Header.Set("Version", canonical.version)
-	}
 	if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
 		req.Header.Set("Originator", originator)
 	} else {
@@ -383,11 +378,6 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
 		canonical := resolveCodexOutboundIdentity("")
-		if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-			req.Header.Set("Version", version)
-		} else {
-			req.Header.Set("Version", canonical.version)
-		}
 		if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
 			req.Header.Set("Originator", originator)
 		} else {

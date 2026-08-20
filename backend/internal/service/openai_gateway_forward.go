@@ -1153,9 +1153,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		apiKeyID := getAPIKeyIDFromContext(c)
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
-			if req.Header.Get("version") == "" {
-				req.Header.Set("version", CodexCanonicalClientVersion())
-			}
 			compactSession := resolveOpenAICompactSessionID(c)
 			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
 		} else {
@@ -1195,7 +1192,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
 	}
 
-	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。
+	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator 同源自洽）。
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
 	if account.Type == AccountTypeOAuth {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))

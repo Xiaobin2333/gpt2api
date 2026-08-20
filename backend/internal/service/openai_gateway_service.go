@@ -39,8 +39,7 @@ const (
 	// 该后缀是 UA 形态的唯一定义处，buildCodexCLIUserAgent 按运行时版本号复用它。
 	codexCLIUserAgentSuffix = " (Debian 13.0.0; x86_64) xterm-256color"
 	// codexCLIUserAgent 是编译期兜底 UA；运行时优先使用由后台版本号拼出的规范 UA。
-	// 版本段必须来自 codexCLIVersion：UA 与 version 头是同一个版本声明的两个出口，
-	// 各自硬编码会漂移成互相矛盾的身份。
+	// 版本段必须来自 codexCLIVersion，避免 UA 内部两个版本位置彼此漂移。
 	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix + " (" + openai.CodexDefaultOriginator + "; " + codexCLIVersion + ")"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
@@ -56,8 +55,8 @@ const (
 	openAIWSRetryJitterRatioDefault    = 0.2
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
 	openAIUpstreamEndpointContextKey   = "openai_actual_upstream_endpoint"
-	// codexCLIVersion 是网关对上游声明的 Codex 客户端版本，同时供 codexCLIUserAgent
-	// 与 version 头使用。上游 /backend-api/codex 在容量紧张时按客户端身份分优先级降载，
+	// codexCLIVersion 是网关对上游声明的 Codex 客户端版本，供 codexCLIUserAgent、
+	// /models 的 client_version 查询参数及 API Key 兼容探针使用。上游 /backend-api/codex 在容量紧张时按客户端身份分优先级降载，
 	// 陈旧版本会被优先丢弃（HTTP 200 + 流内 server_is_overloaded）；非官方客户端配不出
 	// 官方身份时整体回退到本常量，因此它必须跟随官方 CLI 的当前发布版本，
 	// 落后多个版本会让这些请求稳定落在被优先丢弃的一侧。

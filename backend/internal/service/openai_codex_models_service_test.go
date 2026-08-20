@@ -160,12 +160,13 @@ func newCodexModelsTestAccount() *Account {
 func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	manifestBody := `{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}`
 
-	var gotAuth, gotAccountID, gotOriginator, gotClientVersion string
+	var gotAuth, gotAccountID, gotOriginator, gotClientVersion, gotVersionHeader string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotAccountID = r.Header.Get("chatgpt-account-id")
 		gotOriginator = r.Header.Get("Originator")
 		gotClientVersion = r.URL.Query().Get("client_version")
+		gotVersionHeader = r.Header.Get("Version")
 		w.Header().Set("ETag", `W/"abc123"`)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(manifestBody))
@@ -199,6 +200,9 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	}
 	if gotClientVersion != "0.137.0" {
 		t.Errorf("client_version query: got %q", gotClientVersion)
+	}
+	if gotVersionHeader != "" {
+		t.Errorf("OAuth models request must not send Version header: got %q", gotVersionHeader)
 	}
 }
 

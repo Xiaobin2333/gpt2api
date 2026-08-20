@@ -867,7 +867,6 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	req.Header.Set("Accept", "text/event-stream")
 	canonical := resolveCodexOutboundIdentity("")
 	req.Header.Set("Originator", canonical.originator)
-	req.Header.Set("Version", canonical.version)
 	req.Header.Set("User-Agent", canonical.userAgent)
 	if s.identityCache != nil {
 		if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {

@@ -547,9 +547,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
-			if req.Header.Get("version") == "" {
-				req.Header.Set("version", CodexCanonicalClientVersion())
-			}
 			if clientSessionID == "" {
 				clientSessionID = resolveOpenAICompactSessionID(c)
 			}
@@ -598,7 +595,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
 	}
 	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
-	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
+	// （User-Agent / originator 同源自洽），客户端自报身份不会到达上游。
 	if account.Type == AccountTypeOAuth {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
 	}

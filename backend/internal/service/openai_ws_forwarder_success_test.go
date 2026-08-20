@@ -892,7 +892,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 			require.NotNil(t, result)
 			require.Equal(t, openai.CodexDefaultOriginator, captureDialer.lastHeaders.Get("originator"))
 			require.Equal(t, codexCLIUserAgent, captureDialer.lastHeaders.Get("user-agent"))
-			require.Equal(t, codexCLIVersion, captureDialer.lastHeaders.Get("version"))
+			require.Empty(t, captureDialer.lastHeaders.Get("version"))
 		})
 	}
 }
@@ -963,7 +963,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthHonorsAccountUserAgent(t *testin
 		"codex-tui/"+codexCLIVersion+" (Mac OS X 15.1.0; arm64) iTerm.app",
 		captureDialer.lastHeaders.Get("user-agent"),
 	)
-	require.Equal(t, codexCLIVersion, captureDialer.lastHeaders.Get("version"))
+	require.Empty(t, captureDialer.lastHeaders.Get("version"))
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheKey(t *testing.T) {
