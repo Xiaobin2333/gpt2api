@@ -78,14 +78,18 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_DefaultRedirectURI() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		wantUA, wantOriginator := service.CodexCanonicalAuthIdentity()
-		if got := r.Header.Get("User-Agent"); got != wantUA {
-			errCh <- "user-agent mismatch"
+		if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+			errCh <- "content-type mismatch"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if got := r.Header.Get("originator"); got != wantOriginator {
-			errCh <- "originator mismatch"
+		if _, ok := r.Header["User-Agent"]; ok {
+			errCh <- "unexpected user-agent"
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if _, ok := r.Header["Originator"]; ok {
+			errCh <- "unexpected originator"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
