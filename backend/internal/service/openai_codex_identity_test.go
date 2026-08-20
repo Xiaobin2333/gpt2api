@@ -71,11 +71,20 @@ func TestResolveCodexOAuthRequestIdentityCanonicalizesLegacySession(t *testing.T
 
 	require.NotEmpty(t, identity.sessionID)
 	require.NotEmpty(t, identity.threadID)
-	_, err = uuid.Parse(identity.sessionID)
+	sessionID, err := uuid.Parse(identity.sessionID)
 	require.NoError(t, err)
-	_, err = uuid.Parse(identity.threadID)
+	threadID, err := uuid.Parse(identity.threadID)
 	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), sessionID.Version())
+	require.Equal(t, uuid.Version(7), threadID.Version())
 	require.Equal(t, identity.threadID+":0", identity.windowID)
+}
+
+func TestCanonicalCodexRequestWindowIDPreservesOfficialCounter(t *testing.T) {
+	threadID := "019b8c36-4adf-7a04-82b3-bd93a6ed8be0"
+	require.Equal(t, threadID+":7", canonicalCodexRequestWindowID("legacy-thread:7", threadID))
+	require.Equal(t, threadID+":0", canonicalCodexRequestWindowID("invalid", threadID))
+	require.Empty(t, canonicalCodexRequestWindowID("legacy-thread:7", ""))
 }
 
 func TestNormalizeCodexOAuthRequestMetadataKeepsIdentityCoherent(t *testing.T) {
@@ -104,10 +113,16 @@ func TestNormalizeCodexOAuthRequestMetadataKeepsIdentityCoherent(t *testing.T) {
 	turnID := gjson.GetBytes(normalized, "client_metadata.turn_id").String()
 	windowID := gjson.GetBytes(normalized, "client_metadata.x-codex-window-id").String()
 	require.NotEmpty(t, installID)
-	require.Equal(t, c.GetHeader("session-id"), sessionID)
-	require.Equal(t, c.GetHeader("thread-id"), threadID)
+	require.Equal(t, canonicalCodexRequestUUID(c, c.GetHeader("session-id")), sessionID)
+	require.Equal(t, canonicalCodexRequestUUID(c, c.GetHeader("thread-id")), threadID)
 	require.Equal(t, threadID+":0", windowID)
 	require.Equal(t, wantTurnID, turnID)
+	parsedSessionID, err := uuid.Parse(sessionID)
+	require.NoError(t, err)
+	parsedThreadID, err := uuid.Parse(threadID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsedSessionID.Version())
+	require.Equal(t, uuid.Version(7), parsedThreadID.Version())
 	_, err = uuid.Parse(turnID)
 	require.NoError(t, err)
 

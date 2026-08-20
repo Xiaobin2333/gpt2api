@@ -1987,21 +1987,22 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
+	wantSession := wantThread
+	wantWindow := wantThread + ":0"
 
 	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
-	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Equal(t, wantWindow, upstream.lastReq.Header.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
-	require.Equal(t, wantThread+":0", gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, wantWindow, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
 
 	bodyTurnMetadata := gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := upstream.lastReq.Header.Get("x-codex-turn-metadata")
@@ -2049,21 +2050,22 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
+	wantSession := wantThread
+	wantWindow := wantThread + ":0"
 
 	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
-	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Equal(t, wantWindow, upstream.lastReq.Header.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
-	require.Equal(t, wantThread+":0", gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, wantWindow, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
 
 	bodyTurnMetadata := gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := upstream.lastReq.Header.Get("x-codex-turn-metadata")
@@ -2152,7 +2154,7 @@ func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPro
 
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	wantSession := resolveConvergedSessionID(seed)
+	wantSession := resolveConvergedThreadID(seed, "header-session")
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))

@@ -54,6 +54,16 @@ func TestDeriveStableUUIDv4_ValidFormat(t *testing.T) {
 	assert.Equal(t, uuid.RFC4122, parsed.Variant(), "应为 RFC4122 变体")
 }
 
+func TestDeriveStableUUIDv7_DeterministicAndValid(t *testing.T) {
+	a := deriveStableUUIDv7("test-seed", "019b8c36-4adf-7a04-82b3-bd93a6ed8be0")
+	b := deriveStableUUIDv7("test-seed", "019b8c36-4adf-7a04-82b3-bd93a6ed8be0")
+	require.Equal(t, a, b)
+	parsed, err := uuid.Parse(a)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsed.Version())
+	require.Equal(t, uuid.RFC4122, parsed.Variant())
+}
+
 // --- GetCodexFingerprintMode ---
 
 func TestGetCodexFingerprintMode(t *testing.T) {
@@ -91,8 +101,9 @@ func TestResolveConvergedInstallationID_UsesDeviceID(t *testing.T) {
 func TestResolveConvergedInstallationID_DerivesFromSeed(t *testing.T) {
 	account := newTestOAuthAccount(42, nil)
 	result := resolveConvergedInstallationID(account, testCodexFingerprintSeed)
-	_, err := uuid.Parse(result)
+	parsed, err := uuid.Parse(result)
 	require.NoError(t, err, "派生值应为合法 UUID")
+	require.Equal(t, uuid.Version(4), parsed.Version())
 	assert.Equal(t, result, resolveConvergedInstallationID(account, testCodexFingerprintSeed), "确定性")
 }
 
@@ -115,6 +126,9 @@ func TestResolveConvergedThreadID_Deterministic(t *testing.T) {
 	a := resolveConvergedThreadID(testCodexFingerprintSeed, "session-aaa")
 	b := resolveConvergedThreadID(testCodexFingerprintSeed, "session-aaa")
 	assert.Equal(t, a, b, "同一客户端 session 应得到相同 thread_id")
+	parsed, err := uuid.Parse(a)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsed.Version())
 }
 
 func TestResolveConvergedThreadID_EmptySession(t *testing.T) {
@@ -248,15 +262,16 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	convergedInstall := resolveConvergedInstallationID(account, seed)
-	convergedSession := resolveConvergedSessionID(seed)
 	convergedThread := resolveConvergedThreadID(seed, "client-session-aaa")
+	convergedSession := convergedThread
+	convergedWindow := convergedThread + ":0"
 
 	assert.Equal(t, convergedInstall, h.Get("x-codex-installation-id"))
 	assert.Equal(t, convergedSession, h.Get("session-id"))
 	assert.Equal(t, convergedSession, h.Get("session_id"), "下划线形式也应被改写")
 	assert.Equal(t, convergedThread, h.Get("thread-id"))
 	assert.Equal(t, convergedThread, h.Get("x-client-request-id"))
-	assert.Equal(t, convergedThread+":0", h.Get("x-codex-window-id"))
+	assert.Equal(t, convergedWindow, h.Get("x-codex-window-id"))
 
 	var meta map[string]any
 	require.NoError(t, json.Unmarshal([]byte(h.Get("x-codex-turn-metadata")), &meta))
@@ -293,10 +308,12 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	hB.Set("x-codex-turn-metadata", makeTurnMeta())
 	applyCodexFingerprintHeaders(hB, idsB)
 
-	assert.Equal(t, hA.Get("session-id"), hB.Get("session-id"), "session_id 应相同")
+	assert.NotEqual(t, hA.Get("session-id"), hB.Get("session-id"), "不同客户端根 session_id 应不同")
 	assert.NotEqual(t, hA.Get("thread-id"), hB.Get("thread-id"), "不同客户端 thread_id 应不同")
 	assert.NotEqual(t, hA.Get("x-codex-window-id"), hB.Get("x-codex-window-id"), "不同客户端 window_id 应不同")
 	assert.Equal(t, hA.Get("x-codex-installation-id"), hB.Get("x-codex-installation-id"))
+	assert.Equal(t, hA.Get("session-id"), hA.Get("thread-id"))
+	assert.Equal(t, hB.Get("session-id"), hB.Get("thread-id"))
 }
 
 // --- full 模式 ---
@@ -488,13 +505,14 @@ func TestApplyCodexFingerprintClientMetadata_SessionMode(t *testing.T) {
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	convergedInstall := resolveConvergedInstallationID(account, seed)
-	convergedSession := resolveConvergedSessionID(seed)
 	convergedThread := resolveConvergedThreadID(seed, "client-session-aaa")
+	convergedSession := convergedThread
+	convergedWindow := convergedThread + ":0"
 
 	assert.Equal(t, convergedInstall, cm["x-codex-installation-id"])
 	assert.Equal(t, convergedSession, cm["session_id"])
 	assert.Equal(t, convergedThread, cm["thread_id"])
-	assert.Equal(t, convergedThread+":0", cm["x-codex-window-id"])
+	assert.Equal(t, convergedWindow, cm["x-codex-window-id"])
 
 	turnMetaStr, ok := cm["x-codex-turn-metadata"].(string)
 	require.True(t, ok)

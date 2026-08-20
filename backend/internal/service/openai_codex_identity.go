@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,9 +168,7 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 			inbound.Get("x-codex-window-id"),
 		)
 	}
-	if identity.threadID != "" {
-		identity.windowID = identity.threadID + ":0"
-	}
+	identity.windowID = canonicalCodexRequestWindowID(identity.windowID, identity.threadID)
 	return identity
 }
 
@@ -187,10 +186,25 @@ func canonicalCodexRequestUUID(c *gin.Context, value string) string {
 	if value == "" {
 		return ""
 	}
-	if parsed, err := uuid.Parse(value); err == nil && parsed != uuid.Nil {
+	if parsed, err := uuid.Parse(value); err == nil && parsed != uuid.Nil && parsed.Version() == uuid.Version(7) {
 		return parsed.String()
 	}
-	return generateSessionUUID(isolateOpenAISessionID(getAPIKeyIDFromContext(c), value))
+	isolated := isolateOpenAISessionID(getAPIKeyIDFromContext(c), value)
+	return deriveStableUUIDv7("sub2api:codex-request-id:v3:"+isolated, value)
+}
+
+func canonicalCodexRequestWindowID(value, threadID string) string {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return ""
+	}
+	windowNumber := uint64(0)
+	if separator := strings.LastIndexByte(strings.TrimSpace(value), ':'); separator >= 0 {
+		if parsed, err := strconv.ParseUint(strings.TrimSpace(value)[separator+1:], 10, 64); err == nil {
+			windowNumber = parsed
+		}
+	}
+	return threadID + ":" + strconv.FormatUint(windowNumber, 10)
 }
 
 func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthRequestIdentity, compact bool) {

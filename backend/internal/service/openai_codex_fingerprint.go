@@ -101,7 +101,7 @@ func canonicalCodexFingerprintSeed(value any) (string, bool) {
 }
 
 func newCodexFingerprintSeed() string {
-	return uuid.NewString()
+	return uuid.Must(uuid.NewV7()).String()
 }
 
 func stripCodexFingerprintSeed(extra map[string]any) map[string]any {
@@ -236,6 +236,45 @@ func deriveStableUUIDv4(seed string) string {
 		b[10:16])
 }
 
+const codexStableUUIDv7FallbackEpochMs uint64 = 1735689600000 // 2025-01-01 UTC
+
+// deriveStableUUIDv7 deterministically derives a UUIDv7. The first UUIDv7
+// timestamp source is retained so identities derived from an official inbound
+// session keep a plausible creation time. Legacy UUIDv4 seeds use a stable
+// fallback timestamp rather than changing identity on every request.
+func deriveStableUUIDv7(seed string, timestampSources ...string) string {
+	h := sha256.Sum256([]byte(seed))
+	timestampMs := uint64(0)
+	for _, source := range timestampSources {
+		parsed, err := uuid.Parse(strings.TrimSpace(source))
+		if err != nil || parsed.Version() != uuid.Version(7) {
+			continue
+		}
+		timestampMs = uint64(parsed[0])<<40 |
+			uint64(parsed[1])<<32 |
+			uint64(parsed[2])<<24 |
+			uint64(parsed[3])<<16 |
+			uint64(parsed[4])<<8 |
+			uint64(parsed[5])
+		break
+	}
+	if timestampMs == 0 {
+		const fallbackSpanMs = uint64(365 * 24 * time.Hour / time.Millisecond)
+		timestampMs = codexStableUUIDv7FallbackEpochMs + uint64(binary.BigEndian.Uint32(h[16:20]))%fallbackSpanMs
+	}
+
+	b := h[:16]
+	b[0] = byte(timestampMs >> 40)
+	b[1] = byte(timestampMs >> 32)
+	b[2] = byte(timestampMs >> 24)
+	b[3] = byte(timestampMs >> 16)
+	b[4] = byte(timestampMs >> 8)
+	b[5] = byte(timestampMs)
+	b[6] = (b[6] & 0x0f) | 0x70 // version 7
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return uuid.Must(uuid.FromBytes(b)).String()
+}
+
 // resolveConvergedInstallationID 返回账号级恒定的 installation_id。
 // 优先使用管理员配置的真实 device_id，无则从系统管理的账号随机种子确定性派生。
 func resolveConvergedInstallationID(account *Account, seed string) string {
@@ -256,7 +295,7 @@ func resolveConvergedSessionID(seed string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-session-id:v2:" + seed)
+	return deriveStableUUIDv7("sub2api:codex-session-id:v3:"+seed, seed)
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
@@ -266,7 +305,7 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 	if seed == "" || clientSessionID == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-thread-id:v2:" + seed + ":" + clientSessionID)
+	return deriveStableUUIDv7("sub2api:codex-thread-id:v3:"+seed+":"+clientSessionID, clientSessionID, seed)
 }
 
 // codexFingerprintIDs 收敛后的完整 ID 集合。
@@ -316,11 +355,11 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 		return ids
 
 	case codexFingerprintSession:
-		ids.sessionID = resolveConvergedSessionID(seed)
 		ids.threadID = resolveConvergedThreadID(seed, clientSessionID)
 		if ids.threadID == "" {
-			ids.threadID = ids.sessionID
+			ids.threadID = resolveConvergedSessionID(seed)
 		}
+		ids.sessionID = ids.threadID
 		ids.turnID = uuid.Must(uuid.NewV7()).String()
 		ids.windowID = ids.threadID + ":0"
 		return ids
