@@ -65,7 +65,7 @@ type codexFingerprintMode string
 
 const (
 	// codexFingerprintOff 不做任何收敛，原样透传客户端标识。
-	// 仅显式配置 off 时使用；OpenAI OAuth 缺省使用 session 模式。
+	// 仅显式配置 off 时使用；OpenAI OAuth 缺省使用 device 模式。
 	codexFingerprintOff codexFingerprintMode = "off"
 	// codexFingerprintDevice 仅收敛 installation_id 为账号级恒定值。
 	// 上游看到 1 台设备 + 多会话（每用户各自的 session）。
@@ -82,8 +82,9 @@ const (
 const (
 	codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 	codexFingerprintSeedExtraKey = "codex_fingerprint_seed"
-	// New and legacy OAuth credentials converge device and root-session identity by default.
-	codexFingerprintCreateDefault = codexFingerprintSession
+	// New OAuth credentials bind only the installation identity by default. Session,
+	// thread, turn, window, and prompt-cache identities keep their client lifecycle.
+	codexFingerprintCreateDefault = codexFingerprintDevice
 )
 
 func canonicalCodexFingerprintSeed(value any) (string, bool) {
@@ -211,7 +212,7 @@ func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) boo
 
 // GetCodexFingerprintMode 从账号 extra JSON 读取指纹收敛模式。
 //
-// OpenAI OAuth 账号未设置、空值或非法值时统一使用 session；管理员显式配置
+// OpenAI OAuth 账号未设置、空值或非法值时统一使用 device；管理员显式配置
 // off / device / full 时保留该选择。非 OAuth 账号始终返回 off。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if a == nil || !a.IsOpenAIOAuth() {
