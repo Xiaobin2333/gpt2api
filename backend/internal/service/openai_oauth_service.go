@@ -14,10 +14,11 @@ import (
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
 type OpenAIOAuthService struct {
-	sessionStore         *openai.SessionStore
-	proxyRepo            ProxyRepository
-	oauthClient          OpenAIOAuthClient
-	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	sessionStore           *openai.SessionStore
+	proxyRepo              ProxyRepository
+	oauthClient            OpenAIOAuthClient
+	privacyClientFactory   PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	codexAuthClientFactory OpenAICodexAuthClientFactory
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -33,6 +34,12 @@ func NewOpenAIOAuthService(proxyRepo ProxyRepository, oauthClient OpenAIOAuthCli
 // 用于调用 chatgpt.com/backend-api 获取账号信息（plan_type 等）。
 func (s *OpenAIOAuthService) SetPrivacyClientFactory(factory PrivacyClientFactory) {
 	s.privacyClientFactory = factory
+}
+
+// SetCodexAuthClientFactory injects the official Codex HTTP transport used by
+// auth.openai.com endpoints such as PAT whoami.
+func (s *OpenAIOAuthService) SetCodexAuthClientFactory(factory OpenAICodexAuthClientFactory) {
+	s.codexAuthClientFactory = factory
 }
 
 // OpenAIAuthURLResult contains the authorization URL and session info

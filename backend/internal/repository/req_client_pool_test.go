@@ -120,6 +120,14 @@ func TestCreateOpenAIReqClient_Timeout120Seconds(t *testing.T) {
 	require.NotNil(t, client.GetTransport().TLSHandshakeContext)
 }
 
+func TestCreateOpenAICodexAuthReqClientUsesCodexTLSProfile(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	client, err := CreateOpenAICodexAuthReqClient("")
+	require.NoError(t, err)
+	require.Equal(t, "1.1", forceHTTPVersion(t, client))
+	require.NotNil(t, client.GetTransport().TLSHandshakeContext)
+}
+
 func TestGetSharedReqClient_TLSProfilesSeparateCache(t *testing.T) {
 	sharedReqClients = sync.Map{}
 	httpOptions := reqClientOptions{Timeout: time.Second, TLSProfile: tlsfingerprint.CodexHTTPProfile()}

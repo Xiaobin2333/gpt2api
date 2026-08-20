@@ -117,3 +117,9 @@ func CreatePrivacyReqClient(proxyURL string) (*req.Client, error) {
 		Impersonate: true, // Enable Chrome TLS fingerprint impersonation
 	})
 }
+
+// CreateOpenAICodexAuthReqClient returns the same Codex-profiled HTTP client
+// used by OAuth token exchange and refresh for auxiliary auth.openai.com calls.
+func CreateOpenAICodexAuthReqClient(proxyURL string) (*req.Client, error) {
+	return createOpenAIReqClient(proxyURL)
+}
