@@ -570,7 +570,7 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 	}
 
 	// Reuse OpenAICodexUsageSnapshot / Normalize to map primary/secondary windows
-	// to canonical 5h/7d buckets (same logic as probeOpenAICodexSnapshot).
+	// to canonical 5h/7d buckets (the same mapping used for passive response headers).
 	snap := &OpenAICodexUsageSnapshot{}
 	if w := spark.PrimaryWindow; w != nil {
 		p := w.UsedPercent

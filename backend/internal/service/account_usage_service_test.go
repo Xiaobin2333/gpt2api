@@ -2,40 +2,12 @@ package service
 
 import (
 	"context"
-	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
-
-type accountUsageCodexProbeUpstream struct {
-	lastReq         *http.Request
-	lastProxyURL    string
-	lastAccountID   int64
-	lastConcurrency int
-	lastProfile     *tlsfingerprint.Profile
-}
-
-func (u *accountUsageCodexProbeUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return u.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
-}
-
-func (u *accountUsageCodexProbeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	u.lastReq = req
-	u.lastProxyURL = proxyURL
-	u.lastAccountID = accountID
-	u.lastConcurrency = accountConcurrency
-	u.lastProfile = profile
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader("")),
-	}, nil
-}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo
@@ -71,20 +43,20 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		SevenDay: &UsageProgress{Utilization: 0},
 	}
 
-	if !shouldRefreshOpenAICodexSnapshot(&Account{RateLimitResetAt: &rateLimitedUntil}, usage, now) {
-		t.Fatal("expected rate-limited account to force codex snapshot refresh")
+	if shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, RateLimitResetAt: &rateLimitedUntil}, usage, now) {
+		t.Fatal("normal OAuth accounts must use passive snapshots even while rate limited")
 	}
 
 	if shouldRefreshOpenAICodexSnapshot(&Account{}, usage, now) {
 		t.Fatal("expected complete non-rate-limited usage to skip codex snapshot refresh")
 	}
 
-	if !shouldRefreshOpenAICodexSnapshot(&Account{}, &UsageInfo{FiveHour: nil, SevenDay: &UsageProgress{}}, now) {
-		t.Fatal("expected missing 5h snapshot to require refresh")
+	if shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, &UsageInfo{FiveHour: nil, SevenDay: &UsageProgress{}}, now) {
+		t.Fatal("missing normal OAuth snapshots must not create a synthetic inference turn")
 	}
 
 	staleAt := now.Add(-(openAIProbeCacheTTL + time.Minute)).Format(time.RFC3339)
-	if !shouldRefreshOpenAICodexSnapshot(&Account{
+	if shouldRefreshOpenAICodexSnapshot(&Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra: map[string]any{
@@ -92,36 +64,31 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 			"codex_usage_updated_at":                       staleAt,
 		},
 	}, usage, now) {
-		t.Fatal("expected stale ws snapshot to trigger refresh")
+		t.Fatal("stale normal OAuth snapshots must wait for real inference response headers")
 	}
 }
 
-func TestProbeOpenAICodexSnapshotUsesCodexTransportIdentity(t *testing.T) {
-	upstream := &accountUsageCodexProbeUpstream{}
-	svc := &AccountUsageService{httpUpstream: upstream}
+func TestGetOpenAIUsageForceRefreshRemainsPassive(t *testing.T) {
+	now := time.Now()
+	resetAt := now.Add(2 * time.Hour).UTC().Truncate(time.Second)
+	svc := &AccountUsageService{}
 	account := &Account{
-		ID:          42,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Concurrency: 3,
-		Credentials: map[string]any{
-			"access_token":       "oauth-token",
-			"chatgpt_account_id": "chatgpt-account",
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_enabled": true,
+			"codex_usage_updated_at":                       now.Add(-time.Hour).UTC().Format(time.RFC3339),
+			"codex_5h_used_percent":                        42.0,
+			"codex_5h_reset_at":                            resetAt.Format(time.RFC3339),
 		},
 	}
 
-	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	usage, err := svc.getOpenAIUsage(context.Background(), account, true)
 	require.NoError(t, err)
-	require.Empty(t, updates)
-	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
-	require.Equal(t, int64(42), upstream.lastAccountID)
-	require.Equal(t, 3, upstream.lastConcurrency)
-	require.NotNil(t, upstream.lastProfile)
-	require.Equal(t, "codex-cli-0.148.0-http", upstream.lastProfile.Name)
-	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
-	require.Empty(t, upstream.lastReq.Header.Get("Version"))
+	require.NotNil(t, usage.FiveHour)
+	require.Equal(t, 42.0, usage.FiveHour.Utilization)
+	require.Equal(t, resetAt, *usage.FiveHour.ResetsAt)
 }
 
 // TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 外审第9轮 P1:spark 影子用量走

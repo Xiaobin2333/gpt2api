@@ -203,9 +203,8 @@ func ProvideAccountUsageService(
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
-	openAIGatewayService *OpenAIGatewayService,
 ) *AccountUsageService {
-	service := NewAccountUsageService(
+	return NewAccountUsageService(
 		accountRepo,
 		usageLogRepo,
 		usageFetcher,
@@ -218,11 +217,6 @@ func ProvideAccountUsageService(
 		identityCache,
 		tlsFPProfileService,
 	)
-	service.agentIdentityWS = openAIGatewayService
-	if openAIGatewayService != nil {
-		service.httpUpstream = openAIGatewayService.httpUpstream
-	}
-	return service
 }
 
 func ProvideAccountTestService(
