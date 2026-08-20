@@ -95,17 +95,13 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	require.Equal(t, int64(1), upstreamCalls.Load())
 }
 
-func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
+func TestTLSFingerprintHTTPSProxyKeepsCustomTargetHandshake(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
 	transport, err := buildUpstreamTransportWithTLSFingerprint(poolSettings{}, proxyURL, &tlsfingerprint.Profile{Name: "test"})
 	require.NoError(t, err)
-	require.NotNil(t, transport.Proxy)
-	require.Nil(t, transport.DialTLSContext)
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
-	resolved, err := transport.Proxy(req)
-	require.NoError(t, err)
-	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
+	require.Nil(t, transport.Proxy)
+	require.NotNil(t, transport.DialTLSContext)
 }
 
 func startTestSOCKS5Proxy(t *testing.T) (string, *atomic.Int64) {
@@ -608,6 +604,26 @@ func (s *HTTPUpstreamSuite) TestGetOrCreateClient_InvalidURLReturnsError() {
 	svc := s.newService()
 	_, err := svc.getClientEntry("://bad-proxy-url", 1, 1, service.HTTPUpstreamProfileDefault, false, false)
 	require.Error(s.T(), err, "expected error for invalid proxy URL")
+}
+
+func (s *HTTPUpstreamSuite) TestCodexOAuthTLSFingerprintScope() {
+	for _, tc := range []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "chatgpt oauth", url: "https://chatgpt.com/backend-api/codex/responses", want: true},
+		{name: "chatgpt account endpoint", url: "https://chatgpt.com/backend-api/wham/usage", want: true},
+		{name: "openai api key", url: "https://api.openai.com/v1/responses", want: false},
+		{name: "anthropic", url: "https://api.anthropic.com/v1/messages", want: false},
+		{name: "plaintext fixture", url: "http://chatgpt.com/backend-api/codex/responses", want: false},
+	} {
+		s.T().Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, tc.url, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, isCodexOAuthHTTPSRequest(req))
+		})
+	}
 }
 
 func (s *HTTPUpstreamSuite) TestOpenAIProfileDefaultsToHTTP2AndNoHeaderTimeout() {

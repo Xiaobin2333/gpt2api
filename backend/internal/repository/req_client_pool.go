@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 
 	"github.com/imroc/req/v3"
 )
@@ -19,6 +23,7 @@ type reqClientOptions struct {
 	Timeout     time.Duration // 请求超时时间
 	Impersonate bool          // 是否模拟 Chrome 浏览器指纹
 	ForceHTTP2  bool          // 是否强制使用 HTTP/2
+	TLSProfile  *tlsfingerprint.Profile
 }
 
 // sharedReqClients 存储按配置参数缓存的 req 客户端实例
@@ -52,6 +57,12 @@ func getSharedReqClient(opts reqClientOptions) (*req.Client, error) {
 	if opts.Impersonate {
 		client = client.ImpersonateChrome()
 	}
+	if opts.TLSProfile != nil {
+		client = client.EnableForceHTTP1()
+		client.GetTransport().SetTLSHandshake(func(ctx context.Context, addr string, plainConn net.Conn) (net.Conn, *tls.ConnectionState, error) {
+			return tlsfingerprint.HandshakeContext(ctx, plainConn, opts.TLSProfile, addr)
+		})
+	}
 	trimmed, _, err := proxyurl.Parse(opts.ProxyURL)
 	if err != nil {
 		return nil, err
@@ -80,12 +91,20 @@ func instrumentReqClient(client *req.Client) *req.Client {
 }
 
 func buildReqClientKey(opts reqClientOptions) string {
-	return fmt.Sprintf("%s|%s|%t|%t",
+	profileName := ""
+	if opts.TLSProfile != nil {
+		profileName = opts.TLSProfile.Name
+	}
+	key := fmt.Sprintf("%s|%s|%t|%t",
 		strings.TrimSpace(opts.ProxyURL),
 		opts.Timeout.String(),
 		opts.Impersonate,
 		opts.ForceHTTP2,
 	)
+	if profileName != "" {
+		key += "|tls:" + profileName
+	}
+	return key
 }
 
 // CreatePrivacyReqClient creates an HTTP client for OpenAI privacy settings API

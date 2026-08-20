@@ -6,8 +6,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCodexOAuthWebSocketTLSFingerprintScope(t *testing.T) {
+	require.True(t, isCodexOAuthWebSocketURL("wss://chatgpt.com/backend-api/codex/responses"))
+	require.False(t, isCodexOAuthWebSocketURL("wss://api.openai.com/v1/responses"))
+	require.False(t, isCodexOAuthWebSocketURL("wss://api.anthropic.com/v1/messages"))
+	require.False(t, isCodexOAuthWebSocketURL("ws://chatgpt.com/backend-api/codex/responses"))
+}
+
+func TestCoderOpenAIWSClientDialer_CodexClientUsesDedicatedTLSProfile(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	direct, err := dialer.codexHTTPClient("")
+	require.NoError(t, err)
+	directAgain, err := dialer.codexHTTPClient("")
+	require.NoError(t, err)
+	require.Same(t, direct, directAgain)
+
+	transport, ok := direct.Transport.(*req.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.TLSHandshakeContext)
+}
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()

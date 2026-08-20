@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,9 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/imroc/req/v3"
 )
 
 const openAIWSMessageReadLimitBytes int64 = 16 * 1024 * 1024
@@ -111,7 +115,14 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		HTTPHeader:      cloneHeader(headers),
 		CompressionMode: coderws.CompressionContextTakeover,
 	}
-	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
+	proxy := strings.TrimSpace(proxyURL)
+	if isCodexOAuthWebSocketURL(targetURL) {
+		codexClient, err := d.codexHTTPClient(proxy)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		opts.HTTPClient = codexClient
+	} else if proxy != "" {
 		proxyClient, err := d.proxyHTTPClient(proxy)
 		if err != nil {
 			return nil, 0, nil, err
@@ -142,6 +153,55 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		respHeaders = cloneHeader(resp.Header)
 	}
 	return &coderOpenAIWSClientConn{conn: conn}, 0, respHeaders, nil
+}
+
+func isCodexOAuthWebSocketURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && parsed != nil &&
+		strings.EqualFold(parsed.Scheme, "wss") &&
+		strings.EqualFold(strings.TrimSpace(parsed.Hostname()), "chatgpt.com")
+}
+
+func (d *coderOpenAIWSClientDialer) codexHTTPClient(proxy string) (*http.Client, error) {
+	if d == nil {
+		return nil, errors.New("openai ws dialer is nil")
+	}
+	normalizedProxy := strings.TrimSpace(proxy)
+	cacheKey := "codex:" + normalizedProxy
+	now := time.Now().UnixNano()
+
+	d.proxyMu.Lock()
+	defer d.proxyMu.Unlock()
+	if entry, ok := d.proxyClients[cacheKey]; ok && entry != nil && entry.client != nil {
+		entry.lastUsedUnixNano = now
+		d.proxyHits.Add(1)
+		return entry.client, nil
+	}
+
+	client := req.C().EnableForceHTTP1()
+	if normalizedProxy != "" {
+		parsedProxy, err := url.Parse(normalizedProxy)
+		if err != nil || parsedProxy.Scheme == "" || parsedProxy.Host == "" {
+			return nil, fmt.Errorf("invalid proxy url: %s", normalizedProxy)
+		}
+		client.SetProxyURL(normalizedProxy)
+	}
+	transport := client.GetTransport()
+	transport.MaxIdleConns = openAIWSProxyTransportMaxIdleConns
+	transport.MaxIdleConnsPerHost = openAIWSProxyTransportMaxIdleConnsPerHost
+	transport.IdleConnTimeout = openAIWSProxyTransportIdleConnTimeout
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	profile := tlsfingerprint.CodexWebSocketProfile()
+	transport.SetTLSHandshake(func(ctx context.Context, addr string, plainConn net.Conn) (net.Conn, *tls.ConnectionState, error) {
+		return tlsfingerprint.HandshakeContext(ctx, plainConn, profile, addr)
+	})
+
+	httpClient := &http.Client{Transport: transport}
+	d.cleanupProxyClientsLocked(now)
+	d.proxyClients[cacheKey] = &openAIWSProxyClientEntry{client: httpClient, lastUsedUnixNano: now}
+	d.ensureProxyClientCapacityLocked()
+	d.proxyMisses.Add(1)
+	return httpClient, nil
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {
@@ -243,7 +303,7 @@ func closeOpenAIWSProxyClient(client *http.Client) {
 	if client == nil || client.Transport == nil {
 		return
 	}
-	if transport, ok := client.Transport.(*http.Transport); ok && transport != nil {
+	if transport, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
 		transport.CloseIdleConnections()
 	}
 }

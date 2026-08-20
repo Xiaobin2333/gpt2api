@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
@@ -115,6 +116,33 @@ func TestCreateOpenAIReqClient_Timeout120Seconds(t *testing.T) {
 	client, err := createOpenAIReqClient("http://proxy.local:8080")
 	require.NoError(t, err)
 	require.Equal(t, 120*time.Second, client.GetClient().Timeout)
+	require.Equal(t, "1.1", forceHTTPVersion(t, client))
+	require.NotNil(t, client.GetTransport().TLSHandshakeContext)
+}
+
+func TestGetSharedReqClient_TLSProfilesSeparateCache(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	httpOptions := reqClientOptions{Timeout: time.Second, TLSProfile: tlsfingerprint.CodexHTTPProfile()}
+	wsOptions := reqClientOptions{Timeout: time.Second, TLSProfile: tlsfingerprint.CodexWebSocketProfile()}
+
+	httpClient, err := getSharedReqClient(httpOptions)
+	require.NoError(t, err)
+	wsClient, err := getSharedReqClient(wsOptions)
+	require.NoError(t, err)
+	require.NotSame(t, httpClient, wsClient)
+	require.NotEqual(t, buildReqClientKey(httpOptions), buildReqClientKey(wsOptions))
+}
+
+func TestGetSharedReqClient_TLSProfileOverridesImpersonation(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	client, err := getSharedReqClient(reqClientOptions{
+		Timeout:     time.Second,
+		Impersonate: true,
+		TLSProfile:  tlsfingerprint.CodexHTTPProfile(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "1.1", forceHTTPVersion(t, client))
+	require.NotNil(t, client.GetTransport().TLSHandshakeContext)
 }
 
 func TestCreateGeminiReqClient_ForceHTTP2Disabled(t *testing.T) {

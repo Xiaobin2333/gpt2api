@@ -10,6 +10,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/imroc/req/v3"
 )
@@ -126,8 +127,9 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 
 func createOpenAIReqClient(proxyURL string) (*req.Client, error) {
 	return getSharedReqClient(reqClientOptions{
-		ProxyURL: proxyURL,
-		Timeout:  120 * time.Second,
+		ProxyURL:   proxyURL,
+		Timeout:    120 * time.Second,
+		TLSProfile: tlsfingerprint.CodexHTTPProfile(),
 	})
 }
 

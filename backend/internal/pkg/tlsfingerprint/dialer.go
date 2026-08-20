@@ -5,12 +5,16 @@ package tlsfingerprint
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
+	cryptotls "crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -30,6 +34,82 @@ type Profile struct {
 	KeyShareGroups      []uint16 // Empty uses [X25519]
 	PSKModes            []uint16 // Empty uses [psk_dhe_ke]
 	Extensions          []uint16 // Extension type IDs in order; empty uses default Node.js 24.x order
+	RandomizeExtensions bool     // Shuffle Extensions for each ClientHello (rustls behavior)
+}
+
+// CodexHTTPProfile returns the OpenSSL 3.x ClientHello emitted by Codex CLI
+// 0.148.0 for OAuth token and chatgpt.com HTTP requests.
+func CodexHTTPProfile() *Profile {
+	return &Profile{
+		Name: "codex-cli-0.148.0-http",
+		CipherSuites: []uint16{
+			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
+			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
+		},
+		Curves: []uint16{
+			0x11ec, // X25519MLKEM768
+			0x001d, // X25519
+			0x0017, // secp256r1
+			0x001e, // X448
+			0x0018, // secp384r1
+			0x0019, // secp521r1
+			0x0100, // ffdhe2048
+			0x0101, // ffdhe3072
+		},
+		PointFormats: []uint16{0},
+		SignatureAlgorithms: []uint16{
+			0x0905, 0x0906, 0x0904,
+			0x0403, 0x0503, 0x0603,
+			0x0807, 0x0808, 0x081a, 0x081b, 0x081c,
+			0x0809, 0x080a, 0x080b,
+			0x0804, 0x0805, 0x0806,
+			0x0401, 0x0501, 0x0601,
+			0x0303, 0x0301, 0x0302,
+			0x0402, 0x0502, 0x0602,
+		},
+		SupportedVersions: []uint16{utls.VersionTLS13, utls.VersionTLS12},
+		KeyShareGroups:    []uint16{0x11ec, 0x001d},
+		PSKModes:          []uint16{uint16(utls.PskModeDHE)},
+		Extensions: []uint16{
+			0xff01, // renegotiation_info
+			0,      // server_name
+			11,     // ec_point_formats
+			10,     // supported_groups
+			35,     // session_ticket
+			22,     // encrypt_then_mac
+			23,     // extended_master_secret
+			13,     // signature_algorithms
+			43,     // supported_versions
+			45,     // psk_key_exchange_modes
+			51,     // key_share
+		},
+	}
+}
+
+// CodexWebSocketProfile returns the rustls/aws-lc ClientHello emitted by
+// Codex CLI 0.148.0 for Responses WebSocket connections. rustls deliberately
+// randomizes extension order for every handshake.
+func CodexWebSocketProfile() *Profile {
+	return &Profile{
+		Name: "codex-cli-0.148.0-websocket",
+		CipherSuites: []uint16{
+			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
+			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
+		},
+		Curves:       []uint16{0x11ec, 0x001d, 0x0017, 0x0018},
+		PointFormats: []uint16{0},
+		SignatureAlgorithms: []uint16{
+			0x0503, 0x0403, 0x0603, 0x0807, 0x0806,
+			0x0805, 0x0804, 0x0601, 0x0501, 0x0401,
+		},
+		SupportedVersions: []uint16{utls.VersionTLS13, utls.VersionTLS12},
+		KeyShareGroups:    []uint16{0x11ec, 0x001d},
+		PSKModes:          []uint16{uint16(utls.PskModeDHE)},
+		Extensions: []uint16{
+			0, 5, 10, 11, 13, 23, 35, 43, 45, 51,
+		},
+		RandomizeExtensions: true,
+	}
 }
 
 // Dialer creates TLS connections with custom fingerprints.
@@ -204,6 +284,14 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		return nil, fmt.Errorf("connect to proxy: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
+	if strings.EqualFold(d.proxyURL.Scheme, "https") {
+		proxyTLS := cryptotls.Client(conn, &cryptotls.Config{ServerName: d.proxyURL.Hostname()})
+		if err := proxyTLS.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("TLS handshake with proxy: %w", err)
+		}
+		conn = proxyTLS
+	}
 
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
@@ -270,6 +358,14 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 // It builds a ClientHello spec from the profile, applies it, and completes the handshake.
 // On failure, conn is closed and an error is returned.
 func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
+	tlsConn, _, err := HandshakeContext(ctx, conn, profile, addr)
+	return tlsConn, err
+}
+
+// HandshakeContext performs a uTLS handshake on an established connection and
+// returns a standard-library state snapshot for transports with a custom TLS
+// handshake hook.
+func HandshakeContext(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, *cryptotls.ConnectionState, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
@@ -280,12 +376,12 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("apply TLS preset: %w", err)
+		return nil, nil, fmt.Errorf("apply TLS preset: %w", err)
 	}
 
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("TLS handshake failed: %w", err)
+		return nil, nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
 	state := tlsConn.ConnectionState()
@@ -295,7 +391,21 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		"cipher_suite", state.CipherSuite,
 		"alpn", state.NegotiatedProtocol)
 
-	return tlsConn, nil
+	return tlsConn, &cryptotls.ConnectionState{
+		Version:                     state.Version,
+		HandshakeComplete:           state.HandshakeComplete,
+		DidResume:                   state.DidResume,
+		CipherSuite:                 state.CipherSuite,
+		NegotiatedProtocol:          state.NegotiatedProtocol,
+		NegotiatedProtocolIsMutual:  state.NegotiatedProtocolIsMutual,
+		ServerName:                  state.ServerName,
+		PeerCertificates:            state.PeerCertificates,
+		VerifiedChains:              state.VerifiedChains,
+		SignedCertificateTimestamps: state.SignedCertificateTimestamps,
+		OCSPResponse:                state.OCSPResponse,
+		TLSUnique:                   state.TLSUnique,
+		ECHAccepted:                 state.ECHAccepted,
+	}, nil
 }
 
 // toUTLSCurves converts uint16 slice to utls.CurveID slice.
@@ -389,7 +499,10 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	// Determine extension order
 	extOrder := defaultExtensionOrder
 	if profile != nil && len(profile.Extensions) > 0 {
-		extOrder = profile.Extensions
+		extOrder = append([]uint16(nil), profile.Extensions...)
+		if profile.RandomizeExtensions {
+			shuffleExtensions(extOrder)
+		}
 	}
 
 	// Build extensions list from the ordered IDs.
@@ -453,6 +566,17 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 		Extensions:         extensions,
 		TLSVersMax:         utls.VersionTLS13,
 		TLSVersMin:         utls.VersionTLS10,
+	}
+}
+
+func shuffleExtensions(values []uint16) {
+	var random [8]byte
+	for i := len(values) - 1; i > 0; i-- {
+		if _, err := cryptorand.Read(random[:]); err != nil {
+			return
+		}
+		j := int(binary.LittleEndian.Uint64(random[:]) % uint64(i+1))
+		values[i], values[j] = values[j], values[i]
 	}
 }
 
