@@ -393,6 +393,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		}
 		normalized = policyApplied
+		if account.IsOpenAIOAuth() {
+			if sanitized, changed := sanitizeCodexOAuthJSONBody(normalized); changed {
+				normalized = sanitized
+			}
+		}
 		ingressSessionOriginalModel = originalModel
 
 		return openAIWSClientPayload{

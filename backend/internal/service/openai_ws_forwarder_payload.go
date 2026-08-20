@@ -135,6 +135,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
 	applyStagedCodexFingerprintHeaders(c, account, headers)
+	if account != nil && account.IsOpenAIOAuth() {
+		sanitizeCodexOAuthTurnMetadataHeader(headers)
+	}
 
 	if account != nil && account.Type == AccountTypeOAuth {
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, headers, account); err != nil {
@@ -192,6 +195,14 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	payload := make(map[string]any, len(reqBody)+1)
 	for k, v := range reqBody {
 		payload[k] = v
+	}
+	if account != nil && account.IsOpenAIOAuth() {
+		for _, key := range [...]string{"metadata", "client_metadata", "credential_extras", "credentials"} {
+			if value, exists := payload[key]; exists {
+				payload[key] = cloneCodexOAuthMetadataValue(value)
+			}
+		}
+		sanitizeCodexOAuthRequestMap(payload)
 	}
 
 	delete(payload, "background")

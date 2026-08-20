@@ -817,6 +817,11 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		}
 	}
 
+	if sanitized, sanitizedChanged := sanitizeCodexOAuthJSONBody(normalized); sanitizedChanged {
+		normalized = sanitized
+		changed = true
+	}
+
 	return normalized, changed, nil
 }
 
