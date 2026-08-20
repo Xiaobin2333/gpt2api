@@ -71,8 +71,8 @@ const (
 	// 上游看到 1 台设备 + 多会话（每用户各自的 session）。
 	codexFingerprintDevice codexFingerprintMode = "device"
 	// codexFingerprintSession 收敛 installation_id + session_id，
-	// thread_id 按客户端原始 session-id 确定性派生（每个真实 Codex 会话一个独立线程）。
-	// 上游看到 1 台设备 + 1 会话 + N 线程，最接近正常用户 spawn 子代理的模式。
+	// 根 thread_id 按客户端原始 session-id 确定性派生，并与 session_id 保持相等。
+	// 上游看到 1 台设备 + N 个彼此独立的根会话，保持官方根会话 ID 关系。
 	codexFingerprintSession codexFingerprintMode = "session"
 	// codexFingerprintFull 收敛所有标识：installation_id + session_id + thread_id。
 	// 上游看到 1 台设备 + 1 会话 + 1 线程，最激进。
@@ -298,9 +298,8 @@ func resolveConvergedSessionID(seed string) string {
 	return deriveStableUUIDv7("sub2api:codex-session-id:v3:"+seed, seed)
 }
 
-// resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
-// 每个真实 Codex 会话（不同客户端启动实例）获得一个独立线程，
-// 模拟正常用户 spawn 子代理或开多窗口的模式。
+// resolveConvergedThreadID 按客户端原始 session-id 确定性派生根 thread_id。
+// 每个真实 Codex 会话（不同客户端启动实例）获得一个独立根会话 ID。
 func resolveConvergedThreadID(seed, clientSessionID string) string {
 	if seed == "" || clientSessionID == "" {
 		return ""
@@ -327,7 +326,7 @@ type codexFingerprintIDs struct {
 
 // resolveCodexFingerprintIDs 按收敛模式计算出站 ID 集合。
 // clientSessionID 是客户端原始的 session-id 头值（连字符形式），用于 session 模式下
-// 的 thread_id 派生——每个真实 Codex 会话得到一个独立线程。
+// 的根 ID 派生；出站 session_id 与 thread_id 使用同一个派生值。
 // 返回 nil 表示 off 模式，不需要改写。
 // 注意：包含随机生成的 turn_id，调用方必须只调用一次并共享结果给头改写和体改写。
 func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode codexFingerprintMode) *codexFingerprintIDs {
