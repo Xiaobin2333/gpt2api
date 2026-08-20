@@ -82,6 +82,9 @@ const (
 const (
 	codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 	codexFingerprintSeedExtraKey = "codex_fingerprint_seed"
+	// New OAuth credentials bind one stable installation identity by default.
+	// Existing records without an explicit mode remain off in GetCodexFingerprintMode.
+	codexFingerprintCreateDefault = codexFingerprintDevice
 )
 
 func canonicalCodexFingerprintSeed(value any) (string, bool) {
@@ -141,7 +144,16 @@ func codexFingerprintSeed(extra map[string]any) (string, bool) {
 
 func prepareCodexFingerprintExtraForCreate(platform, accountType string, extra map[string]any) map[string]any {
 	prepared := stripCodexFingerprintSeed(extra)
-	if platform != PlatformOpenAI || accountType != AccountTypeOAuth || !codexFingerprintModeRequiresSeed(codexFingerprintModeFromExtra(prepared)) {
+	if platform != PlatformOpenAI || accountType != AccountTypeOAuth {
+		return prepared
+	}
+	if _, configured := prepared[codexFingerprintModeExtraKey]; !configured {
+		if prepared == nil {
+			prepared = make(map[string]any, 2)
+		}
+		prepared[codexFingerprintModeExtraKey] = string(codexFingerprintCreateDefault)
+	}
+	if !codexFingerprintModeRequiresSeed(codexFingerprintModeFromExtra(prepared)) {
 		return prepared
 	}
 	if prepared == nil {

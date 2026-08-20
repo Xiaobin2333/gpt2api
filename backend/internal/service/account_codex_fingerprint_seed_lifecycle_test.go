@@ -16,6 +16,28 @@ func requireValidCodexFingerprintSeed(t *testing.T, extra map[string]any) string
 	return seed
 }
 
+func TestPrepareCodexFingerprintExtraForCreateDefaultsNewOAuthToDevice(t *testing.T) {
+	prepared := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, nil)
+
+	require.Equal(t, "device", prepared[codexFingerprintModeExtraKey])
+	requireValidCodexFingerprintSeed(t, prepared)
+}
+
+func TestPrepareCodexFingerprintExtraForCreateHonorsExplicitOff(t *testing.T) {
+	prepared := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, map[string]any{
+		codexFingerprintModeExtraKey: "off",
+		codexFingerprintSeedExtraKey: userSuppliedCodexFingerprintSeed,
+	})
+
+	require.Equal(t, "off", prepared[codexFingerprintModeExtraKey])
+	require.NotContains(t, prepared, codexFingerprintSeedExtraKey)
+}
+
+func TestPrepareCodexFingerprintExtraForCreateLeavesAPIKeyUnbound(t *testing.T) {
+	prepared := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeAPIKey, nil)
+	require.Nil(t, prepared)
+}
+
 func TestAdminCreateAccountStripsUserSeedAndCreatesFreshSeedWhenEnabled(t *testing.T) {
 	repo := &upstreamBillingProbeAccountRepo{}
 	svc := &adminServiceImpl{accountRepo: repo}
