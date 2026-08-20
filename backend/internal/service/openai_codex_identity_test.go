@@ -250,14 +250,26 @@ func TestEnforceCodexIdentityHeaders(t *testing.T) {
 			if tt.version != "" {
 				h.Set("version", tt.version)
 			}
+			h.Set("accept-language", "zh-CN,zh;q=0.9")
 
 			enforceCodexIdentityHeaders(h)
 
 			require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
 			require.Equal(t, codexCLIUserAgent, h.Get("user-agent"))
 			require.Empty(t, h.Get("version"))
+			require.Empty(t, h.Get("accept-language"))
 		})
 	}
+}
+
+func TestEnforceCodexIdentityHeadersStripsLocaleWithoutOriginator(t *testing.T) {
+	h := http.Header{
+		"Accept-Language": {"zh-CN,zh;q=0.9"},
+		"Version":         {"9.9.9"},
+	}
+	enforceCodexIdentityHeaders(h)
+	require.Empty(t, h.Get("Accept-Language"))
+	require.Empty(t, h.Get("Version"))
 }
 
 // 账号级自定义 UA 是管理员的显式配置，仍然生效；但它只贡献客户端名与 OS / 架构 / 终端指纹，
