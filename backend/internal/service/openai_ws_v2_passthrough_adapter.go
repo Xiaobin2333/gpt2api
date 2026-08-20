@@ -756,6 +756,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		if sanitized, changed := sanitizeCodexOAuthJSONBody(firstClientMessage); changed {
 			firstClientMessage = sanitized
 		}
+		fpIDs := resolveCodexFingerprintIDsForWSTurn(c, account, 1)
+		if converged, changed, convergeErr := applyCodexFingerprintClientMetadataRaw(firstClientMessage, fpIDs); convergeErr != nil {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", convergeErr)
+		} else if changed {
+			firstClientMessage = converged
+		}
 	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
@@ -1030,6 +1036,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if policyErr == nil && blocked == nil && account.IsOpenAIOAuth() {
 				if sanitized, changed := sanitizeCodexOAuthJSONBody(out); changed {
 					out = sanitized
+				}
+				if isResponseCreate {
+					fpIDs := resolveCodexFingerprintIDsForWSTurn(c, account, turnNo)
+					if converged, changed, convergeErr := applyCodexFingerprintClientMetadataRaw(out, fpIDs); convergeErr != nil {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", convergeErr)
+					} else if changed {
+						out = converged
+					}
 				}
 			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）

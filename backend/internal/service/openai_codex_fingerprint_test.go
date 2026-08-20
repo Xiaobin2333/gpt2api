@@ -129,6 +129,25 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
+func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set("session-id", "client-session")
+	account := newTestOAuthAccount(101, map[string]any{codexFingerprintModeExtraKey: "session"})
+
+	first := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
+	stageCodexFingerprintIDs(c, first)
+	reused := resolveCodexFingerprintIDsForWSTurn(c, account, 1)
+	followUp := resolveCodexFingerprintIDsForWSTurn(c, account, 2)
+
+	require.Same(t, first, reused)
+	require.Equal(t, first.installationID, followUp.installationID)
+	require.Equal(t, first.sessionID, followUp.sessionID)
+	require.Equal(t, first.threadID, followUp.threadID)
+	require.NotEqual(t, first.turnID, followUp.turnID)
+}
+
 // 未显式配置的存量账号不得被收敛（#5610）：默认返回 nil，出站身份保持
 // v0.1.175 之前的客户端原值。
 func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {

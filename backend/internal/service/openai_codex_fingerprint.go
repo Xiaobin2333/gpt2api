@@ -352,6 +352,22 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
 }
 
+// resolveCodexFingerprintIDsForWSTurn keeps the first WS frame and handshake
+// headers on the same precomputed identity. Follow-up response.create frames
+// get a fresh turn_id while retaining the account/session/thread identity.
+func resolveCodexFingerprintIDsForWSTurn(c *gin.Context, account *Account, turn int) *codexFingerprintIDs {
+	if turn <= 1 {
+		if ids := stagedCodexFingerprintIDs(c, account); ids != nil {
+			return ids
+		}
+	}
+	var clientHeaders http.Header
+	if c != nil && c.Request != nil {
+		clientHeaders = c.Request.Header
+	}
+	return resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+}
+
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
 // 在 buildUpstreamRequest 的白名单透传之后、enforceCodexIdentityHeaders 之前调用。
 func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
