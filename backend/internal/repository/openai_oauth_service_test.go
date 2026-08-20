@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -109,31 +110,23 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_DefaultRedirectURI() {
 	require.Equal(s.T(), "rt", resp.RefreshToken)
 }
 
-func (s *OpenAIOAuthServiceSuite) TestRefreshToken_FormFields() {
+func (s *OpenAIOAuthServiceSuite) TestRefreshToken_JSONBody() {
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			errCh <- "ParseForm failed"
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			errCh <- "content-type mismatch"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if got := r.PostForm.Get("grant_type"); got != "refresh_token" {
-			errCh <- "grant_type mismatch"
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			errCh <- "read body failed"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if got := r.PostForm.Get("refresh_token"); got != "rt" {
-			errCh <- "refresh_token mismatch"
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if got := r.PostForm.Get("client_id"); got != openai.ClientID {
-			errCh <- "client_id mismatch"
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if got := r.PostForm.Get("scope"); got != openai.RefreshScopes {
-			errCh <- "scope mismatch"
+		wantBody := `{"client_id":"` + openai.ClientID + `","grant_type":"refresh_token","refresh_token":"rt"}`
+		if got := string(body); got != wantBody {
+			errCh <- "body mismatch"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -169,11 +162,12 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_FormFields() {
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	var seenClientIDs []string
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
+		var body openAIRefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		clientID := r.PostForm.Get("client_id")
+		clientID := body.ClientID
 		seenClientIDs = append(seenClientIDs, clientID)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"at","refresh_token":"rt","token_type":"bearer","expires_in":3600}`)
@@ -190,11 +184,12 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_UseProvidedClientID() {
 	const customClientID = "custom-client-id"
 	var seenClientIDs []string
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
+		var body openAIRefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		clientID := r.PostForm.Get("client_id")
+		clientID := body.ClientID
 		seenClientIDs = append(seenClientIDs, clientID)
 		if clientID != customClientID {
 			w.WriteHeader(http.StatusBadRequest)

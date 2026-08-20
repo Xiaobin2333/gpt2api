@@ -23,6 +23,12 @@ type openaiOAuthService struct {
 	tokenURL string
 }
 
+type openAIRefreshRequest struct {
+	ClientID     string `json:"client_id"`
+	GrantType    string `json:"grant_type"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 func (s *openaiOAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*openai.TokenResponse, error) {
 	client, err := createOpenAIReqClient(proxyURL)
 	if err != nil {
@@ -86,11 +92,11 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_CLIENT_INIT_FAILED", "create HTTP client: %v", err)
 	}
 
-	formData := url.Values{}
-	formData.Set("grant_type", "refresh_token")
-	formData.Set("refresh_token", refreshToken)
-	formData.Set("client_id", clientID)
-	formData.Set("scope", openai.RefreshScopes)
+	requestBody := openAIRefreshRequest{
+		ClientID:     clientID,
+		GrantType:    "refresh_token",
+		RefreshToken: refreshToken,
+	}
 
 	var tokenResp openai.TokenResponse
 
@@ -99,7 +105,8 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 		SetContext(ctx).
 		SetHeader("User-Agent", authUA).
 		SetHeader("originator", authOriginator).
-		SetFormDataFromValues(formData).
+		SetBodyJsonMarshal(&requestBody).
+		SetHeader("Content-Type", "application/json").
 		SetSuccessResult(&tokenResp).
 		Post(s.tokenURL)
 
