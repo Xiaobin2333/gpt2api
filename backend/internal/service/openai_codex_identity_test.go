@@ -1,13 +1,80 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
+	t.Run("responses uses official session headers", func(t *testing.T) {
+		h := make(http.Header)
+		h.Set("session_id", "legacy-session")
+		h.Set("conversation_id", "legacy-conversation")
+		h.Set("x-codex-installation-id", "legacy-installation")
+		identity := codexOAuthRequestIdentity{
+			installationID: "1b54c276-a143-4543-8a21-f6e2512a09f5",
+			sessionID:      "74a0919d-14ba-41fb-b63f-918a938132d1",
+			threadID:       "9c3449ee-25bb-448d-a242-7051d96f9455",
+			windowID:       "9c3449ee-25bb-448d-a242-7051d96f9455:0",
+		}
+
+		applyCodexOAuthRequestIdentityHeaders(h, identity, false)
+
+		require.Equal(t, identity.sessionID, h.Get("session-id"))
+		require.Equal(t, identity.threadID, h.Get("thread-id"))
+		require.Equal(t, identity.threadID, h.Get("x-client-request-id"))
+		require.Equal(t, identity.windowID, h.Get("x-codex-window-id"))
+		require.Empty(t, h.Get("session_id"))
+		require.Empty(t, h.Get("conversation_id"))
+		require.Empty(t, h.Get("x-codex-installation-id"))
+	})
+
+	t.Run("compact carries installation without client request id", func(t *testing.T) {
+		h := make(http.Header)
+		identity := codexOAuthRequestIdentity{
+			installationID: "1b54c276-a143-4543-8a21-f6e2512a09f5",
+			sessionID:      "74a0919d-14ba-41fb-b63f-918a938132d1",
+			threadID:       "9c3449ee-25bb-448d-a242-7051d96f9455",
+			windowID:       "9c3449ee-25bb-448d-a242-7051d96f9455:0",
+		}
+
+		applyCodexOAuthRequestIdentityHeaders(h, identity, true)
+
+		require.Equal(t, identity.installationID, h.Get("x-codex-installation-id"))
+		require.Empty(t, h.Get("x-client-request-id"))
+	})
+}
+
+func TestResolveCodexOAuthRequestIdentityCanonicalizesLegacySession(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "legacy-session")
+	body, err := json.Marshal(map[string]any{
+		"prompt_cache_key": "legacy-session",
+		"client_metadata": map[string]any{
+			"thread_id": "legacy-thread",
+		},
+	})
+	require.NoError(t, err)
+
+	identity := resolveCodexOAuthRequestIdentity(c, &Account{}, c.Request.Header, body, "legacy-session")
+
+	require.NotEmpty(t, identity.sessionID)
+	require.NotEmpty(t, identity.threadID)
+	_, err = uuid.Parse(identity.sessionID)
+	require.NoError(t, err)
+	_, err = uuid.Parse(identity.threadID)
+	require.NoError(t, err)
+	require.Equal(t, identity.threadID+":0", identity.windowID)
+}
 
 func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {
 	t.Helper()

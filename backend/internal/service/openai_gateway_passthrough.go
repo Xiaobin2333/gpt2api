@@ -585,6 +585,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	applyStagedCodexFingerprintHeaders(c, account, req.Header)
 	if account.Type == AccountTypeOAuth {
 		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
+		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, gjson.GetBytes(body, "prompt_cache_key").String())
+		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
 	}
 	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
 	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。

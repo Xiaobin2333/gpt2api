@@ -137,6 +137,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	applyStagedCodexFingerprintHeaders(c, account, headers)
 	if account != nil && account.IsOpenAIOAuth() {
 		sanitizeCodexOAuthTurnMetadataHeader(headers)
+		identity := resolveCodexOAuthRequestIdentity(c, account, headers, nil, promptCacheKey)
+		applyCodexOAuthRequestIdentityHeaders(headers, identity, false)
 	}
 
 	if account != nil && account.Type == AccountTypeOAuth {

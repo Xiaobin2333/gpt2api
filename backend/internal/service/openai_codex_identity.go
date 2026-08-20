@@ -8,7 +8,9 @@ import (
 	"sync/atomic"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 // codexUpstreamMinVersion 上游 /backend-api/codex 接受的最低 version 头：
@@ -102,6 +104,108 @@ func ApplyCodexCanonicalAuthIdentity(h http.Header) {
 	userAgent, originator := CodexCanonicalAuthIdentity()
 	h.Set("user-agent", userAgent)
 	h.Set("originator", originator)
+}
+
+type codexOAuthRequestIdentity struct {
+	installationID string
+	sessionID      string
+	threadID       string
+	windowID       string
+}
+
+func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.Header, body []byte, promptCacheKey string) codexOAuthRequestIdentity {
+	identity := codexOAuthRequestIdentity{}
+	if ids := stagedCodexFingerprintIDs(c, account); ids != nil {
+		identity.installationID = ids.installationID
+		identity.sessionID = ids.sessionID
+		identity.threadID = ids.threadID
+		identity.windowID = ids.windowID
+	}
+	if identity.installationID == "" {
+		identity.installationID = strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
+	}
+	if identity.installationID == "" && account != nil {
+		if seed, ok := codexFingerprintSeed(account.Extra); ok {
+			identity.installationID = resolveConvergedInstallationID(account, seed)
+		} else {
+			identity.installationID = account.GetOpenAIDeviceID()
+		}
+	}
+	if identity.sessionID == "" {
+		identity.sessionID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.session_id").String(),
+			h.Get("session-id"),
+			promptCacheKey,
+			h.Get("session_id"),
+		)
+	}
+	if identity.threadID == "" {
+		identity.threadID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.thread_id").String(),
+			h.Get("thread-id"),
+			identity.sessionID,
+		)
+	}
+	identity.sessionID = canonicalCodexRequestUUID(c, identity.sessionID)
+	identity.threadID = canonicalCodexRequestUUID(c, identity.threadID)
+	if identity.windowID == "" {
+		identity.windowID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.x-codex-window-id").String(),
+			h.Get("x-codex-window-id"),
+		)
+	}
+	if identity.threadID != "" {
+		identity.windowID = identity.threadID + ":0"
+	}
+	return identity
+}
+
+func firstNonEmptyCodexIdentityValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func canonicalCodexRequestUUID(c *gin.Context, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := uuid.Parse(value); err == nil && parsed != uuid.Nil {
+		return parsed.String()
+	}
+	return generateSessionUUID(isolateOpenAISessionID(getAPIKeyIDFromContext(c), value))
+}
+
+func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthRequestIdentity, compact bool) {
+	if h == nil {
+		return
+	}
+	h.Del("session_id")
+	h.Del("conversation_id")
+	if identity.sessionID != "" {
+		h.Set("session-id", identity.sessionID)
+	}
+	if identity.threadID != "" {
+		h.Set("thread-id", identity.threadID)
+	}
+	if identity.windowID != "" {
+		h.Set("x-codex-window-id", identity.windowID)
+	}
+	if compact {
+		h.Del("x-client-request-id")
+		if identity.installationID != "" {
+			h.Set("x-codex-installation-id", identity.installationID)
+		}
+		return
+	}
+	h.Del("x-codex-installation-id")
+	if identity.threadID != "" {
+		h.Set("x-client-request-id", identity.threadID)
+	}
 }
 
 // CodexCanonicalClientVersion 返回当前生效的 Codex 客户端版本号。
