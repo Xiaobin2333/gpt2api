@@ -160,18 +160,17 @@ func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing
 	require.NotEqual(t, first.turnID, followUp.turnID)
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsDevice(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
 
 	require.NotNil(t, ids)
-	require.Equal(t, codexFingerprintSession, ids.mode)
+	require.Equal(t, codexFingerprintDevice, ids.mode)
 	require.NotEmpty(t, ids.installationID)
-	require.Equal(t, ids.sessionID, ids.threadID)
-	require.Equal(t, ids.threadID+":0", ids.windowID)
-	parsed, err := uuid.Parse(ids.sessionID)
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(7), parsed.Version())
+	require.Empty(t, ids.sessionID)
+	require.Empty(t, ids.threadID)
+	require.Empty(t, ids.turnID)
+	require.Empty(t, ids.windowID)
 }
 
 // 管理员显式 opt-in 的账号行为不变。
