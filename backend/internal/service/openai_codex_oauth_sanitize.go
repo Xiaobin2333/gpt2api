@@ -179,7 +179,7 @@ func sanitizeCodexOAuthTurnMetadataHeader(headers http.Header) bool {
 }
 
 func normalizeCodexOAuthFieldName(key string) string {
-	return strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(key)))
+	return strings.NewReplacer("-", "_", " ", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(key)))
 }
 
 func isBlockedCodexOAuthClientField(key string) bool {
@@ -187,7 +187,11 @@ func isBlockedCodexOAuthClientField(key string) bool {
 	case "base_url", "custom_base_url", "custom_base_url_enabled", "endpoint",
 		"hostname", "host", "api_key", "x_api_key", "key", "authorization",
 		"timezone", "time_zone", "tz", "country", "country_code", "countrycode",
-		"region", "region_code", "regioncode", "locale", "language", "accept_language":
+		"region", "region_code", "regioncode", "locale", "language", "accept_language",
+		"device_id", "deviceid", "client_id", "clientid", "client_info",
+		"runtime", "runtime_version", "runtimeversion", "sdk_version", "sdkversion",
+		"app_version", "appversion", "telemetry", "environment",
+		"os", "os_name", "os_version", "platform", "architecture", "arch", "machine":
 		return true
 	default:
 		return false
@@ -203,6 +207,11 @@ func containsBlockedCodexOAuthFieldText(value string) bool {
 		"country_code", "countrycode", `"country"`,
 		"region_code", "regioncode", `"region"`,
 		`"locale"`, `"language"`, "accept_language", "accept-language",
+		"device_id", "device-id", "client_id", "client-id", "client_info", "client-info",
+		"runtime_version", "runtime-version", "sdk_version", "sdk-version",
+		"app.version", "app_version", "app-version", `"telemetry"`,
+		`"os"`, "os_name", "os-name", "os_version", "os-version",
+		`"platform"`, `"architecture"`, `"arch"`, `"machine"`,
 	} {
 		if strings.Contains(lower, token) {
 			return true
