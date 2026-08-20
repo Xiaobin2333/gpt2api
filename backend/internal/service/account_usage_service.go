@@ -865,7 +865,6 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	canonical := resolveCodexOutboundIdentity("")
 	req.Header.Set("Originator", canonical.originator)
 	req.Header.Set("Version", canonical.version)
@@ -879,6 +878,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	// 上面写进 header 的指纹缓存 UA 只在强制统一被关闭时才参与配对（保持回滚后的历史语义）；
 	// 强制统一开启时客户端身份不参与构造，探针与真实转发用同一套规范身份出站。
 	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
+	stripOpenAILegacyResponsesBeta(req.Header)
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
 
 	proxyURL := ""

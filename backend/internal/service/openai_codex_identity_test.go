@@ -156,7 +156,7 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 		require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
 		require.Equal(t, codexCLIUserAgent, h.Get("user-agent"))
 		require.Equal(t, codexCLIVersion, h.Get("version"))
-		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
+		require.Empty(t, h.Get("OpenAI-Beta"))
 	})
 
 	t.Run("官方非 CLI 客户端身份同样被统一", func(t *testing.T) {
@@ -171,7 +171,7 @@ func TestEnsureCodexIdentityHeaders(t *testing.T) {
 		require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
 		require.Equal(t, codexCLIUserAgent, h.Get("user-agent"))
 		require.Equal(t, codexCLIVersion, h.Get("version"))
-		require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
+		require.Equal(t, "assistants=v2", h.Get("OpenAI-Beta"))
 	})
 }
 
