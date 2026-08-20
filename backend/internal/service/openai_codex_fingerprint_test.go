@@ -160,11 +160,18 @@ func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing
 	require.NotEqual(t, first.turnID, followUp.turnID)
 }
 
-// 未显式配置的存量账号不得被收敛（#5610）：默认返回 nil，出站身份保持
-// v0.1.175 之前的客户端原值。
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
-	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(account, nil), "无 extra 应视为 off")
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
+
+	require.NotNil(t, ids)
+	require.Equal(t, codexFingerprintSession, ids.mode)
+	require.NotEmpty(t, ids.installationID)
+	require.Equal(t, ids.sessionID, ids.threadID)
+	require.Equal(t, ids.threadID+":0", ids.windowID)
+	parsed, err := uuid.Parse(ids.sessionID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsed.Version())
 }
 
 // 管理员显式 opt-in 的账号行为不变。
