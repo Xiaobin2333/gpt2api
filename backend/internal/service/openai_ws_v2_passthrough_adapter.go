@@ -762,6 +762,16 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		} else if changed {
 			firstClientMessage = converged
 		}
+		normalized, metadataErr := normalizeCodexOAuthRequestMetadata(
+			c,
+			account,
+			firstClientMessage,
+			gjson.GetBytes(firstClientMessage, "prompt_cache_key").String(),
+		)
+		if metadataErr != nil {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+		}
+		firstClientMessage = normalized
 	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
@@ -826,6 +836,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	)
 	if buildHdrErr != nil {
 		return fmt.Errorf("build ws headers: %w", buildHdrErr)
+	}
+	if account.IsOpenAIOAuth() {
+		applyCodexOAuthTurnMetadataCompatibilityHeader(headers, firstClientMessage)
 	}
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -1044,6 +1057,16 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					} else if changed {
 						out = converged
 					}
+					normalized, metadataErr := normalizeCodexOAuthRequestMetadata(
+						c,
+						account,
+						out,
+						gjson.GetBytes(out, "prompt_cache_key").String(),
+					)
+					if metadataErr != nil {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+					}
+					out = normalized
 				}
 			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）

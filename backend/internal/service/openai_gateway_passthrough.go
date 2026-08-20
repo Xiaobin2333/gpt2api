@@ -483,6 +483,14 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// DeepSeek 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if account.IsOpenAIOAuth() && !isOpenAIResponsesCompactPath(c) {
+		var normalizeErr error
+		promptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+		body, normalizeErr = normalizeCodexOAuthRequestMetadata(c, account, body, promptCacheKey)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("normalize Codex OAuth passthrough metadata: %w", normalizeErr)
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -587,6 +595,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
 		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, gjson.GetBytes(body, "prompt_cache_key").String())
 		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
 	}
 	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
 	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。

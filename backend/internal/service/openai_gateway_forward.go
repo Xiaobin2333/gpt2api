@@ -1090,6 +1090,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if account.IsOpenAIOAuth() && !isOpenAIResponsesCompactPath(c) {
+		var normalizeErr error
+		body, normalizeErr = normalizeCodexOAuthRequestMetadata(c, account, body, promptCacheKey)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("normalize Codex OAuth request metadata: %w", normalizeErr)
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -1185,6 +1192,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
 		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, promptCacheKey)
 		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
 	}
 
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。

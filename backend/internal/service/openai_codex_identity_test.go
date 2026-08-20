@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
@@ -74,6 +76,62 @@ func TestResolveCodexOAuthRequestIdentityCanonicalizesLegacySession(t *testing.T
 	_, err = uuid.Parse(identity.threadID)
 	require.NoError(t, err)
 	require.Equal(t, identity.threadID+":0", identity.windowID)
+}
+
+func TestNormalizeCodexOAuthRequestMetadataKeepsIdentityCoherent(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session-id", "74a0919d-14ba-41fb-b63f-918a938132d1")
+	c.Request.Header.Set("thread-id", "9c3449ee-25bb-448d-a242-7051d96f9455")
+	account := &Account{
+		ID:       7,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintDevice),
+			codexFingerprintSeedExtraKey: "f4e092dc-3aba-4c1f-bbae-4700123f63ef",
+		},
+	}
+	wantTurnID := "019b8c36-4adf-7a04-82b3-bd93a6ed8be0"
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"74a0919d-14ba-41fb-b63f-918a938132d1","client_metadata":{"x-codex-turn-metadata":"{\"agent_name\":\"/workspace\",\"turn_id\":\"019b8c36-4adf-7a04-82b3-bd93a6ed8be0\",\"sandbox_mode\":\"workspace-write\",\"tool_namespaces_info\":{\"shell\":{\"name\":\"shell\"}}}"},"input":[]}`)
+
+	normalized, err := normalizeCodexOAuthRequestMetadata(c, account, body, "74a0919d-14ba-41fb-b63f-918a938132d1")
+	require.NoError(t, err)
+
+	installID := gjson.GetBytes(normalized, "client_metadata.x-codex-installation-id").String()
+	sessionID := gjson.GetBytes(normalized, "client_metadata.session_id").String()
+	threadID := gjson.GetBytes(normalized, "client_metadata.thread_id").String()
+	turnID := gjson.GetBytes(normalized, "client_metadata.turn_id").String()
+	windowID := gjson.GetBytes(normalized, "client_metadata.x-codex-window-id").String()
+	require.NotEmpty(t, installID)
+	require.Equal(t, c.GetHeader("session-id"), sessionID)
+	require.Equal(t, c.GetHeader("thread-id"), threadID)
+	require.Equal(t, threadID+":0", windowID)
+	require.Equal(t, wantTurnID, turnID)
+	_, err = uuid.Parse(turnID)
+	require.NoError(t, err)
+
+	metadata := gjson.Parse(gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String())
+	rawMetadata := gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String()
+	require.Equal(t, installID, metadata.Get("installation_id").String())
+	require.Equal(t, sessionID, metadata.Get("session_id").String())
+	require.Equal(t, threadID, metadata.Get("thread_id").String())
+	require.Equal(t, turnID, metadata.Get("turn_id").String())
+	require.Equal(t, windowID, metadata.Get("window_id").String())
+	require.Equal(t, "turn", metadata.Get("request_kind").String())
+	require.Equal(t, "/workspace", metadata.Get("agent_name").String())
+	require.Equal(t, "workspace-write", metadata.Get("sandbox_mode").String())
+	require.False(t, metadata.Get("root_turn_id").Exists())
+	require.True(t, metadata.Get("tool_namespaces_info.shell").Exists())
+	require.Less(t, strings.Index(rawMetadata, `"installation_id"`), strings.Index(rawMetadata, `"turn_id"`))
+	require.Less(t, strings.Index(rawMetadata, `"turn_id"`), strings.Index(rawMetadata, `"request_kind"`))
+	require.Less(t, strings.Index(rawMetadata, `"request_kind"`), strings.Index(rawMetadata, `"sandbox_mode"`))
+
+	headers := make(http.Header)
+	applyCodexOAuthTurnMetadataCompatibilityHeader(headers, normalized)
+	headerMetadata := gjson.Parse(headers.Get(openAIWSTurnMetadataHeader))
+	require.Equal(t, turnID, headerMetadata.Get("turn_id").String())
+	require.False(t, headerMetadata.Get("tool_namespaces_info").Exists())
 }
 
 func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {

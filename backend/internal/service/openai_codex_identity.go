@@ -1,16 +1,22 @@
 package service
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // codexUpstreamMinVersion 上游 /backend-api/codex 接受的最低 version 头：
@@ -115,6 +121,10 @@ type codexOAuthRequestIdentity struct {
 
 func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.Header, body []byte, promptCacheKey string) codexOAuthRequestIdentity {
 	identity := codexOAuthRequestIdentity{}
+	var inbound http.Header
+	if c != nil && c.Request != nil {
+		inbound = c.Request.Header
+	}
 	if ids := stagedCodexFingerprintIDs(c, account); ids != nil {
 		identity.installationID = ids.installationID
 		identity.sessionID = ids.sessionID
@@ -135,7 +145,9 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.sessionID = firstNonEmptyCodexIdentityValue(
 			gjson.GetBytes(body, "client_metadata.session_id").String(),
 			h.Get("session-id"),
+			inbound.Get("session-id"),
 			promptCacheKey,
+			inbound.Get("session_id"),
 			h.Get("session_id"),
 		)
 	}
@@ -143,6 +155,7 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.threadID = firstNonEmptyCodexIdentityValue(
 			gjson.GetBytes(body, "client_metadata.thread_id").String(),
 			h.Get("thread-id"),
+			inbound.Get("thread-id"),
 			identity.sessionID,
 		)
 	}
@@ -152,6 +165,7 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.windowID = firstNonEmptyCodexIdentityValue(
 			gjson.GetBytes(body, "client_metadata.x-codex-window-id").String(),
 			h.Get("x-codex-window-id"),
+			inbound.Get("x-codex-window-id"),
 		)
 	}
 	if identity.threadID != "" {
@@ -206,6 +220,226 @@ func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthReq
 	if identity.threadID != "" {
 		h.Set("x-client-request-id", identity.threadID)
 	}
+}
+
+func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body []byte, promptCacheKey string) ([]byte, error) {
+	if account == nil || !account.IsOpenAIOAuth() || len(body) == 0 || !gjson.ValidBytes(body) {
+		return body, nil
+	}
+	var headers http.Header
+	if c != nil && c.Request != nil {
+		headers = c.Request.Header
+	}
+	identity := resolveCodexOAuthRequestIdentity(c, account, headers, body, promptCacheKey)
+	if identity.installationID == "" && identity.sessionID == "" && identity.threadID == "" {
+		return body, nil
+	}
+
+	turnMetadata := make(map[string]any)
+	rawTurnMetadata := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String())
+	if rawTurnMetadata == "" && headers != nil {
+		rawTurnMetadata = strings.TrimSpace(headers.Get(openAIWSTurnMetadataHeader))
+	}
+	if rawTurnMetadata != "" {
+		_ = json.Unmarshal([]byte(rawTurnMetadata), &turnMetadata)
+	}
+
+	turnID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.turn_id").String())
+	if turnID == "" {
+		turnID, _ = turnMetadata["turn_id"].(string)
+	}
+	ids := stagedCodexFingerprintIDs(c, account)
+	if ids != nil && ids.turnID != "" {
+		turnID = ids.turnID
+	}
+	turnID = canonicalCodexRequestUUID(c, turnID)
+	if turnID == "" {
+		generated, err := uuid.NewV7()
+		if err != nil {
+			return body, err
+		}
+		turnID = generated.String()
+	}
+
+	next := body
+	var err error
+	for path, value := range map[string]string{
+		"client_metadata.x-codex-installation-id": identity.installationID,
+		"client_metadata.session_id":              identity.sessionID,
+		"client_metadata.thread_id":               identity.threadID,
+		"client_metadata.turn_id":                 turnID,
+		"client_metadata.x-codex-window-id":       identity.windowID,
+	} {
+		if value == "" {
+			continue
+		}
+		next, err = sjson.SetBytes(next, path, value)
+		if err != nil {
+			return body, err
+		}
+	}
+
+	if identity.installationID != "" {
+		turnMetadata["installation_id"] = identity.installationID
+	}
+	if identity.sessionID != "" {
+		turnMetadata["session_id"] = identity.sessionID
+	}
+	if identity.threadID != "" {
+		turnMetadata["thread_id"] = identity.threadID
+	}
+	turnMetadata["turn_id"] = turnID
+	if identity.windowID != "" {
+		turnMetadata["window_id"] = identity.windowID
+	}
+	if _, ok := turnMetadata["request_kind"]; !ok {
+		turnMetadata["request_kind"] = "turn"
+	}
+	if _, ok := turnMetadata["turn_started_at_unix_ms"]; !ok {
+		turnStartedAt := time.Now().UnixMilli()
+		if ids != nil && ids.turnStartedAtUnixMs > 0 {
+			turnStartedAt = ids.turnStartedAtUnixMs
+		}
+		turnMetadata["turn_started_at_unix_ms"] = turnStartedAt
+	}
+	encodedTurnMetadata, err := marshalCodexTurnMetadata(turnMetadata)
+	if err != nil {
+		return body, err
+	}
+	next, err = sjson.SetBytes(next, "client_metadata.x-codex-turn-metadata", encodedTurnMetadata)
+	if err != nil {
+		return body, err
+	}
+	return next, nil
+}
+
+func applyCodexOAuthTurnMetadataCompatibilityHeader(h http.Header, body []byte) {
+	if h == nil {
+		return
+	}
+	value := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String())
+	if value == "" {
+		return
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(value), &metadata); err != nil {
+		return
+	}
+	// The CLI keeps the unbounded tool inventory in client_metadata only. Its
+	// compatibility header is the same metadata snapshot without this field.
+	delete(metadata, "tool_namespaces_info")
+	encoded, err := marshalCodexTurnMetadata(metadata)
+	if err == nil {
+		h.Set(openAIWSTurnMetadataHeader, encoded)
+	}
+}
+
+var codexTurnMetadataFieldOrder = [...]string{
+	"installation_id",
+	"session_id",
+	"thread_id",
+	"agent_name",
+	"turn_id",
+	"window_id",
+	"request_kind",
+	"forked_from_thread_id",
+	"parent_thread_id",
+	"parent_turn_id",
+	"root_turn_id",
+	"subagent_kind",
+	"thread_source",
+	"sandbox",
+	"sandbox_mode",
+	"auto_review_enabled",
+	"node_repl_auto_review_required",
+	"node_repl_disabled",
+	"workspaces",
+	"tool_namespaces_info",
+	"turn_started_at_unix_ms",
+	"compaction",
+}
+
+func marshalCodexTurnMetadata(metadata map[string]any) (string, error) {
+	orderedKeys := make([]string, 0, len(metadata))
+	known := make(map[string]struct{}, len(codexTurnMetadataFieldOrder))
+	for _, key := range codexTurnMetadataFieldOrder {
+		known[key] = struct{}{}
+		if _, ok := metadata[key]; ok {
+			orderedKeys = append(orderedKeys, key)
+		}
+	}
+	extraKeys := make([]string, 0, len(metadata)-len(orderedKeys))
+	for key := range metadata {
+		if _, ok := known[key]; !ok {
+			extraKeys = append(extraKeys, key)
+		}
+	}
+	sort.Strings(extraKeys)
+	orderedKeys = append(orderedKeys, extraKeys...)
+
+	var encoded bytes.Buffer
+	encoded.WriteByte('{')
+	for index, key := range orderedKeys {
+		if index > 0 {
+			encoded.WriteByte(',')
+		}
+		keyJSON, err := marshalCodexJSONValue(key)
+		if err != nil {
+			return "", err
+		}
+		valueJSON, err := marshalCodexJSONValue(metadata[key])
+		if err != nil {
+			return "", err
+		}
+		encoded.Write(keyJSON)
+		encoded.WriteByte(':')
+		encoded.Write(valueJSON)
+	}
+	encoded.WriteByte('}')
+	return asciiOnlyJSON(encoded.Bytes()), nil
+}
+
+func marshalCodexJSONValue(value any) ([]byte, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
+}
+
+func asciiOnlyJSON(encoded []byte) string {
+	if bytes.IndexFunc(encoded, func(r rune) bool { return r > 0x7f }) < 0 {
+		return string(encoded)
+	}
+	const hex = "0123456789abcdef"
+	var out strings.Builder
+	out.Grow(len(encoded))
+	for len(encoded) > 0 {
+		r, size := utf8.DecodeRune(encoded)
+		encoded = encoded[size:]
+		if r <= 0x7f {
+			out.WriteByte(byte(r))
+			continue
+		}
+		if r <= 0xffff {
+			writeCodexJSONUnicodeEscape(&out, uint16(r), hex)
+			continue
+		}
+		r -= 0x10000
+		writeCodexJSONUnicodeEscape(&out, uint16(0xd800+(r>>10)), hex)
+		writeCodexJSONUnicodeEscape(&out, uint16(0xdc00+(r&0x3ff)), hex)
+	}
+	return out.String()
+}
+
+func writeCodexJSONUnicodeEscape(out *strings.Builder, value uint16, hex string) {
+	out.WriteString(`\u`)
+	out.WriteByte(hex[(value>>12)&0xf])
+	out.WriteByte(hex[(value>>8)&0xf])
+	out.WriteByte(hex[(value>>4)&0xf])
+	out.WriteByte(hex[value&0xf])
 }
 
 // CodexCanonicalClientVersion 返回当前生效的 Codex 客户端版本号。

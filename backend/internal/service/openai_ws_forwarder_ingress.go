@@ -408,6 +408,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			} else if changed {
 				normalized = converged
 			}
+			metadataNormalized, metadataErr := normalizeCodexOAuthRequestMetadata(c, account, normalized, promptCacheKey)
+			if metadataErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+			}
+			normalized = metadataNormalized
 		}
 		promptCacheKey = strings.TrimSpace(gjson.GetBytes(normalized, "prompt_cache_key").String())
 		ingressSessionOriginalModel = originalModel
