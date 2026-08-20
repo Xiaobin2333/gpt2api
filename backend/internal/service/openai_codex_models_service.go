@@ -18,6 +18,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"golang.org/x/net/http2"
 	"golang.org/x/sync/singleflight"
 )
@@ -471,7 +472,21 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		}
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 		resp, err = s.httpUpstream.Do(req, request.proxyURL, request.accountID, request.accountConcurrency)
+	} else if s.httpUpstream != nil {
+		// /models is sent by the same Codex HTTP client as inference/auth requests.
+		// Keep its TLS ClientHello aligned as well; the previous direct Go client
+		// made this otherwise-correct request distinguishable at transport level.
+		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+		resp, err = s.httpUpstream.DoWithTLS(
+			req,
+			request.proxyURL,
+			request.accountID,
+			request.accountConcurrency,
+			tlsfingerprint.CodexHTTPProfile(),
+		)
 	} else {
+		// Test and standalone constructions may omit HTTPUpstream. Production
+		// wiring always supplies it, so this path is only a compatibility fallback.
 		client, clientErr := httpclient.GetClient(httpclient.Options{
 			ProxyURL:              request.proxyURL,
 			Timeout:               codexModelsManifestRequestTimeout,

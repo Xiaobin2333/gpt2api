@@ -24,7 +24,8 @@ import (
 )
 
 type codexModelsHTTPUpstreamStub struct {
-	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+	do             func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+	lastTLSProfile *tlsfingerprint.Profile
 }
 
 type codexModelsBlockingBody struct {
@@ -51,8 +52,37 @@ func (s *codexModelsHTTPUpstreamStub) Do(req *http.Request, proxyURL string, acc
 	return s.do(req, proxyURL, accountID, accountConcurrency)
 }
 
-func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	s.lastTLSProfile = profile
 	return s.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func TestFetchCodexModelsManifestOAuthUsesCodexTLSProfile(t *testing.T) {
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+		require.Equal(t, "proxy", proxyURL)
+		require.Equal(t, int64(42), accountID)
+		require.Equal(t, 3, accountConcurrency)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+
+	manifest, err := svc.fetchCodexModelsManifestUpstream(context.Background(), codexModelsManifestRequest{
+		url:                "https://chatgpt.com/backend-api/codex/models?client_version=0.148.0",
+		headers:            http.Header{"User-Agent": {codexCLIUserAgent}},
+		proxyURL:           "proxy",
+		accountID:          42,
+		accountConcurrency: 3,
+	}, "")
+
+	require.NoError(t, err)
+	require.JSONEq(t, `{"models":[]}`, string(manifest.Body))
+	require.NotNil(t, upstream.lastTLSProfile)
+	require.Equal(t, "codex-cli-0.148.0-http", upstream.lastTLSProfile.Name)
 }
 
 func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
