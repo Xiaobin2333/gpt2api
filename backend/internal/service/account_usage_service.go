@@ -301,6 +301,7 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	httpUpstream            HTTPUpstream
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 }
@@ -884,15 +885,28 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	client, err := httppool.GetClient(httppool.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               15 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build openai probe client: %w", err)
+	var resp *http.Response
+	if s.httpUpstream != nil {
+		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+		resp, err = s.httpUpstream.DoWithTLS(
+			req,
+			proxyURL,
+			account.ID,
+			account.Concurrency,
+			tlsfingerprint.CodexHTTPProfile(),
+		)
+	} else {
+		var client *http.Client
+		client, err = httppool.GetClient(httppool.Options{
+			ProxyURL:              proxyURL,
+			Timeout:               15 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build openai probe client: %w", err)
+		}
+		resp, err = client.Do(req)
 	}
-	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai codex probe request failed: %w", err)
 	}

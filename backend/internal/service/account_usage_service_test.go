@@ -2,10 +2,40 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/stretchr/testify/require"
 )
+
+type accountUsageCodexProbeUpstream struct {
+	lastReq         *http.Request
+	lastProxyURL    string
+	lastAccountID   int64
+	lastConcurrency int
+	lastProfile     *tlsfingerprint.Profile
+}
+
+func (u *accountUsageCodexProbeUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return u.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+}
+
+func (u *accountUsageCodexProbeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	u.lastReq = req
+	u.lastProxyURL = proxyURL
+	u.lastAccountID = accountID
+	u.lastConcurrency = accountConcurrency
+	u.lastProfile = profile
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo
@@ -64,6 +94,34 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	}, usage, now) {
 		t.Fatal("expected stale ws snapshot to trigger refresh")
 	}
+}
+
+func TestProbeOpenAICodexSnapshotUsesCodexTransportIdentity(t *testing.T) {
+	upstream := &accountUsageCodexProbeUpstream{}
+	svc := &AccountUsageService{httpUpstream: upstream}
+	account := &Account{
+		ID:          42,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 3,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-account",
+		},
+	}
+
+	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	require.NoError(t, err)
+	require.Empty(t, updates)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+	require.Equal(t, int64(42), upstream.lastAccountID)
+	require.Equal(t, 3, upstream.lastConcurrency)
+	require.NotNil(t, upstream.lastProfile)
+	require.Equal(t, "codex-cli-0.148.0-http", upstream.lastProfile.Name)
+	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
+	require.Empty(t, upstream.lastReq.Header.Get("Version"))
 }
 
 // TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 外审第9轮 P1:spark 影子用量走

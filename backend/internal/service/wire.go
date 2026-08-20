@@ -219,6 +219,9 @@ func ProvideAccountUsageService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	if openAIGatewayService != nil {
+		service.httpUpstream = openAIGatewayService.httpUpstream
+	}
 	return service
 }
 
