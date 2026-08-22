@@ -407,7 +407,11 @@ func resolveOpenAICompactSessionID(c *gin.Context) string {
 // IsForwardableOpenAIResponsesRequestPath 负责。这样即便将来新增路由漏挂守卫，
 // 拼进上游 URL 的也只会是合规片段。
 func openAIResponsesRequestPathSuffix(c *gin.Context) string {
-	suffix, ok := sanitizedUpstreamPathSuffix(rawOpenAIResponsesRequestPathSuffix(c))
+	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
+	if !recognized {
+		return ""
+	}
+	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
 	if !ok {
 		return ""
 	}
@@ -417,8 +421,39 @@ func openAIResponsesRequestPathSuffix(c *gin.Context) string {
 // IsForwardableOpenAIResponsesRequestPath 判断入站请求携带的 /responses 子路径
 // 是否可以安全转发。路由层用它在鉴权后、调度前直接拒绝畸形子路径。
 func IsForwardableOpenAIResponsesRequestPath(c *gin.Context) bool {
-	_, ok := sanitizedUpstreamPathSuffix(rawOpenAIResponsesRequestPathSuffix(c))
+	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
+	if !recognized {
+		return false
+	}
+	_, ok := sanitizedUpstreamPathSuffix(rawSuffix)
 	return ok
+}
+
+// IsForwardableOpenAIOAuthResponsesRequestPath limits ChatGPT Codex OAuth
+// traffic to endpoints emitted by the official client: /responses and the
+// exact legacy /responses/compact endpoint.
+func IsForwardableOpenAIOAuthResponsesRequestPath(c *gin.Context) bool {
+	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
+	if !recognized {
+		return false
+	}
+	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
+	return ok && (suffix == "" || suffix == "/compact")
+}
+
+func openAIResponsesRequestPathSuffixForAccount(c *gin.Context, account *Account) (string, error) {
+	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
+	if !recognized {
+		return "", fmt.Errorf("unsupported responses path")
+	}
+	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
+	if !ok {
+		return "", fmt.Errorf("unsupported responses subpath")
+	}
+	if account != nil && account.IsOpenAIOAuth() && suffix != "" && suffix != "/compact" {
+		return "", fmt.Errorf("unsupported OAuth responses subpath")
+	}
+	return suffix, nil
 }
 
 // IsOpenAIResponsesInputTokensRequestPath reports whether the request targets
@@ -429,25 +464,30 @@ func IsOpenAIResponsesInputTokensRequestPath(c *gin.Context) bool {
 
 // rawOpenAIResponsesRequestPathSuffix 仅做提取，不做任何安全判断。
 func rawOpenAIResponsesRequestPathSuffix(c *gin.Context) string {
+	suffix, _ := checkedOpenAIResponsesRequestPathSuffix(c)
+	return suffix
+}
+
+func checkedOpenAIResponsesRequestPathSuffix(c *gin.Context) (string, bool) {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return ""
+		return "", false
 	}
 	normalizedPath := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
 	if normalizedPath == "" {
-		return ""
+		return "", false
 	}
 	idx := strings.LastIndex(normalizedPath, "/responses")
 	if idx < 0 {
-		return ""
+		return "", false
 	}
 	suffix := normalizedPath[idx+len("/responses"):]
 	if suffix == "" || suffix == "/" {
-		return ""
+		return "", true
 	}
 	if !strings.HasPrefix(suffix, "/") {
-		return ""
+		return "", false
 	}
-	return suffix
+	return suffix, true
 }
 
 func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
