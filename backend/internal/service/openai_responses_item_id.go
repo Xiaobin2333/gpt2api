@@ -20,6 +20,9 @@ func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	if itemType == "reasoning" {
 		return !strings.HasPrefix(id, "rs")
 	}
+	if itemType == "custom_tool_call" {
+		return !strings.HasPrefix(id, "ctc")
+	}
 	if isCodexToolCallInputType(itemType) {
 		return !strings.HasPrefix(id, "fc")
 	}
