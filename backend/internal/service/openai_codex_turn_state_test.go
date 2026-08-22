@@ -279,18 +279,16 @@ func TestEnsureOpenAIRemoteCompactionV2BetaFeature(t *testing.T) {
 	})
 }
 
-// 对齐真实 Codex：该头是会话级常量，挂在 OAuth 的每个请求上，而不是只在
-// 压缩回合出现（codex-rs build_model_client_beta_features_header）。
 func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	oauthAccount := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKeyAccount := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 
-	t.Run("oauth_plain_request_gets_default_codex_shape", func(t *testing.T) {
+	t.Run("oauth_plain_request_without_capability_stays_absent", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"),
-			"OAuth 的普通请求也必须带会话级 beta 头")
+		require.Empty(t, h.Get("x-codex-beta-features"),
+			"普通请求不得替客户端虚构 beta 能力")
 	})
 
 	t.Run("client_declared_header_preserved", func(t *testing.T) {
@@ -299,7 +297,7 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
 		require.Equal(t, "some_other_feature", h.Get("x-codex-beta-features"),
-			"客户端显式声明的能力集不得被网关改写（非空即视为用户已关闭 v2）")
+			"客户端显式声明的能力集不得被网关改写")
 	})
 
 	t.Run("native_v2_forces_feature_even_when_client_trimmed_it", func(t *testing.T) {
@@ -337,10 +335,7 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	})
 }
 
-// WS 握手与 HTTP 出站必须给出同一份会话级 beta 头：真实 Codex 的
-// build_websocket_headers 复用 build_responses_headers（client.rs），
-// 两侧不一致还会让预热连接与实际请求落进不同的连接池兼容分桶。
-func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
+func TestBuildOpenAIWSHeaders_PreservesClientBetaFeatures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
 	decision := OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2}
@@ -368,8 +363,8 @@ func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
 	}
 
 	headers := build(t, oauthAccount, "")
-	require.Equal(t, "remote_compaction_v2", headers.Get("x-codex-beta-features"),
-		"WS 握手也必须带会话级 beta 头")
+	require.Empty(t, headers.Get("x-codex-beta-features"),
+		"普通 WS 握手不得合成客户端未声明的 beta")
 
 	declared := build(t, oauthAccount, "some_other_feature")
 	require.Equal(t, []string{"some_other_feature"}, declared.Values("x-codex-beta-features"),

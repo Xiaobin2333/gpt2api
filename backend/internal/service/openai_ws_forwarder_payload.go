@@ -105,11 +105,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			}
 		}
 	}
-	// 真实 Codex 的 WS 握手同样携带会话级 x-codex-beta-features
-	// （client.rs build_websocket_headers 复用 build_responses_headers），
-	// 客户端未声明时补成默认形态，与 HTTP 出站保持一致。放在客户端头拷贝
-	// 之外：该头是账号/会话级属性，不依赖入站请求是否存在，也避免预热与
-	// 实际请求因头差异落进不同的连接池兼容分桶。
+	// 普通 WS 握手保留客户端已有 beta；只有原生 compaction_trigger 请求
+	// 才补齐 remote_compaction_v2，与 HTTP 请求使用同一能力判定。
 	applyOpenAICodexBetaFeatures(c, account, headers)
 	// 保留客户端已有会话值。OAuth 的最终身份收口会将其映射到官方使用的
 	// session-id；不要先编码成网关私有的 16 位哈希形态。
