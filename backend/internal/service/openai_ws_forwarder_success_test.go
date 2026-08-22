@@ -781,6 +781,9 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 			"responses_websockets_v2_enabled": true,
 		},
 	}
+	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
+	require.NotNil(t, expectedIDs)
+	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
 
 	body := []byte(`{"model":"gpt-5.1","stream":false,"store":true,"input":[{"type":"input_text","text":"hello","namespace":"native-wsv2"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
@@ -797,7 +800,8 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 	require.Equal(t, "native-wsv2", gjson.Get(requestJSON, "input.0.namespace").String(), "OAuth WSv2 应保留原生 namespace")
 	require.Equal(t, openAIWSBetaV2Value, captureDialer.lastHeaders.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", captureDialer.lastHeaders.Get("x-codex-beta-features"))
-	require.Equal(t, "sess-oauth-1", captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, expectedIDs.sessionID, captureDialer.lastHeaders.Get("session-id"))
+	require.NotEqual(t, "sess-oauth-1", captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("conversation_id"))
 }
@@ -963,7 +967,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthHonorsAccountUserAgent(t *testin
 	require.Empty(t, captureDialer.lastHeaders.Get("version"))
 }
 
-func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheKey(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2_DefaultFullOverridesPromptCacheSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1014,6 +1018,9 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 			"responses_websockets_v2_enabled": true,
 		},
 	}
+	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
+	require.NotNil(t, expectedIDs)
+	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
 
 	body := []byte(`{"model":"gpt-5.1","stream":true,"prompt_cache_key":"pcache_123","input":[{"type":"input_text","text":"hi"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
@@ -1021,7 +1028,8 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 	require.NotNil(t, result)
 	require.Equal(t, "resp_prompt_cache_key", result.RequestID)
 
-	require.Equal(t, "pcache_123", captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, expectedIDs.sessionID, captureDialer.lastHeaders.Get("session-id"))
+	require.NotEqual(t, "pcache_123", captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("conversation_id"))
 	require.NotNil(t, captureConn.lastWrite)

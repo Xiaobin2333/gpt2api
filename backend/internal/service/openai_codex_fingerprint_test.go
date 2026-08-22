@@ -76,9 +76,9 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{"nil 账号", nil, codexFingerprintOff},
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
-		{"无 extra 默认 device", newTestOAuthAccount(1, nil), codexFingerprintDevice},
-		{"空值默认 device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintDevice},
-		{"非法值默认 device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintDevice},
+		{"无 extra 默认 full", newTestOAuthAccount(1, nil), codexFingerprintFull},
+		{"空值默认 full", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintFull},
+		{"非法值默认 full", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintFull},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
@@ -184,17 +184,17 @@ func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing
 	require.NotEqual(t, first.turnID, followUp.turnID)
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsDevice(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsFull(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
 
 	require.NotNil(t, ids)
-	require.Equal(t, codexFingerprintDevice, ids.mode)
+	require.Equal(t, codexFingerprintFull, ids.mode)
 	require.NotEmpty(t, ids.installationID)
-	require.Empty(t, ids.sessionID)
-	require.Empty(t, ids.threadID)
-	require.Empty(t, ids.turnID)
-	require.Empty(t, ids.windowID)
+	require.NotEmpty(t, ids.sessionID)
+	require.Equal(t, ids.sessionID, ids.threadID)
+	require.NotEmpty(t, ids.turnID)
+	require.Equal(t, ids.threadID+":0", ids.windowID)
 }
 
 // 管理员显式 opt-in 的账号行为不变。

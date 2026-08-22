@@ -1101,7 +1101,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Len(t, upstreamConn.writes, 1, "passthrough 模式应透传首条 response.create")
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeadersUsePromptCacheAndTurnState(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultFullConvergesSessionAndTurnState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -1146,6 +1146,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 			"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
 		},
 	}
+	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, nil)
+	require.NotNil(t, expectedIDs)
+	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
 
 	serverErrCh := make(chan error, 1)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1224,7 +1227,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 		t.Fatal("等待 passthrough websocket 结束超时")
 	}
 
-	require.Equal(t, "pcache_passthrough", captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, expectedIDs.sessionID, captureDialer.lastHeaders.Get("session-id"))
+	require.NotEqual(t, "pcache_passthrough", captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
 	require.Equal(t, "turn-state-1", captureDialer.lastHeaders.Get(openAIWSTurnStateHeader))
 	require.Len(t, upstreamConn.writes, 1)

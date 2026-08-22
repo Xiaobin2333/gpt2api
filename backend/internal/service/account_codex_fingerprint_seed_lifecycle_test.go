@@ -16,19 +16,19 @@ func requireValidCodexFingerprintSeed(t *testing.T, extra map[string]any) string
 	return seed
 }
 
-func TestPrepareCodexFingerprintExtraForCreateDefaultsNewOAuthToDevice(t *testing.T) {
+func TestPrepareCodexFingerprintExtraForCreateDefaultsNewOAuthToFull(t *testing.T) {
 	prepared := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, nil)
 
-	require.Equal(t, "device", prepared[codexFingerprintModeExtraKey])
+	require.Equal(t, "full", prepared[codexFingerprintModeExtraKey])
 	requireValidCodexFingerprintSeed(t, prepared)
 }
 
-func TestPrepareCodexFingerprintExtraForCreateNormalizesInvalidModeToDevice(t *testing.T) {
+func TestPrepareCodexFingerprintExtraForCreateNormalizesInvalidModeToFull(t *testing.T) {
 	prepared := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, map[string]any{
 		codexFingerprintModeExtraKey: "invalid",
 	})
 
-	require.Equal(t, "device", prepared[codexFingerprintModeExtraKey])
+	require.Equal(t, "full", prepared[codexFingerprintModeExtraKey])
 	requireValidCodexFingerprintSeed(t, prepared)
 }
 
