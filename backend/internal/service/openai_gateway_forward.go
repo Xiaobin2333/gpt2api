@@ -1176,8 +1176,15 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	applyStagedCodexFingerprintHeaders(c, account, req.Header)
 	if account.Type == AccountTypeOAuth {
 		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
-		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, promptCacheKey)
-		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		if isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body) {
+			// The Messages compatibility bridge deliberately omits the Codex
+			// originator. Do not pair that non-Codex request with a partial Codex
+			// session identity reconstructed from its internal cache key.
+			clearCodexOAuthRequestIdentityHeaders(req.Header)
+		} else {
+			identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, promptCacheKey)
+			applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		}
 	}
 
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator 同源自洽）。
