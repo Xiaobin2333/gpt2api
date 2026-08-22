@@ -43,20 +43,23 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		SevenDay: &UsageProgress{Utilization: 0},
 	}
 
-	if shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, RateLimitResetAt: &rateLimitedUntil}, usage, now) {
-		t.Fatal("normal OAuth accounts must use passive snapshots even while rate limited")
+	if !shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, RateLimitResetAt: &rateLimitedUntil}, usage, now) {
+		t.Fatal("rate-limited OAuth accounts must refresh the read-only quota snapshot")
 	}
 
 	if shouldRefreshOpenAICodexSnapshot(&Account{}, usage, now) {
 		t.Fatal("expected complete non-rate-limited usage to skip codex snapshot refresh")
 	}
+	if shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, nil, now) {
+		t.Fatal("API Key accounts must not query the OAuth usage endpoint")
+	}
 
-	if shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, &UsageInfo{FiveHour: nil, SevenDay: &UsageProgress{}}, now) {
-		t.Fatal("missing normal OAuth snapshots must not create a synthetic inference turn")
+	if !shouldRefreshOpenAICodexSnapshot(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, &UsageInfo{FiveHour: nil, SevenDay: &UsageProgress{}}, now) {
+		t.Fatal("missing normal OAuth snapshots must refresh through the read-only usage endpoint")
 	}
 
 	staleAt := now.Add(-(openAIProbeCacheTTL + time.Minute)).Format(time.RFC3339)
-	if shouldRefreshOpenAICodexSnapshot(&Account{
+	if !shouldRefreshOpenAICodexSnapshot(&Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra: map[string]any{
@@ -64,11 +67,19 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 			"codex_usage_updated_at":                       staleAt,
 		},
 	}, usage, now) {
-		t.Fatal("stale normal OAuth snapshots must wait for real inference response headers")
+		t.Fatal("stale normal OAuth snapshots must refresh through the read-only usage endpoint")
+	}
+	freshAt := now.Add(-time.Minute).Format(time.RFC3339)
+	if shouldRefreshOpenAICodexSnapshot(&Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{"codex_usage_updated_at": freshAt},
+	}, usage, now) {
+		t.Fatal("fresh normal OAuth snapshots must respect the quota cache TTL")
 	}
 }
 
-func TestGetOpenAIUsageForceRefreshRemainsPassive(t *testing.T) {
+func TestGetOpenAIUsageForceRefreshPreservesSnapshotWhenQuotaServiceUnavailable(t *testing.T) {
 	now := time.Now()
 	resetAt := now.Add(2 * time.Hour).UTC().Truncate(time.Second)
 	svc := &AccountUsageService{}
@@ -129,14 +140,14 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected fresh spark shadow to skip refresh (TTL not elapsed)")
 	}
 
-	// 反向对照:普通账号无 WSv2 + 过期时间戳→仍不刷(WSv2 门控普通账号的 probe 刷新)。
+	// 普通账号同样使用只读 /wham/usage，刷新不依赖 WSv2。
 	normalNoWS := &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"codex_usage_updated_at": staleAt},
 	}
-	if shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
-		t.Fatal("expected non-WSv2 normal account to skip codex probe refresh")
+	if !shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
+		t.Fatal("expected stale non-WSv2 normal account to refresh")
 	}
 }
 

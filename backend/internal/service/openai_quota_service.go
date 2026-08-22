@@ -534,33 +534,47 @@ func generateRedeemRequestID() (string, error) {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:]), nil
 }
 
+func buildCodexQuotaWindowExtraUpdates(usage *OpenAIQuotaUsage, spark bool, now time.Time) map[string]any {
+	if usage == nil {
+		return nil
+	}
+	if !spark {
+		return buildCodexRateLimitWindowExtraUpdates(usage.RateLimit, now)
+	}
+	return buildCodexSparkWindowExtraUpdates(usage, now)
+}
+
 // buildCodexSparkWindowExtraUpdates extracts Codex Spark usage windows from the
-// /wham/usage response body's additional_rate_limits, matching the entry with
-// MeteredFeature == "codex_bengalfox". It produces plain codex_* keys (NOT the
-// Method-Z "codex_spark_" prefix) so that a spark shadow account's extra map
-// is populated with the same key names used by the scheduling / frontend layers.
-// Returns nil when no codex_bengalfox entry is present or when the RateLimit
-// yields no window data.
+// /wham/usage response body's codex_bengalfox envelope. It writes the same
+// codex_* keys used by normal OAuth accounts so existing scheduling and UI
+// readers remain dimension-agnostic.
 func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) map[string]any {
 	if usage == nil {
 		return nil
 	}
-	var spark *OpenAIRateLimit
+	var rateLimit *OpenAIRateLimit
 	for i := range usage.AdditionalRateLimits {
 		a := usage.AdditionalRateLimits[i]
 		if a.MeteredFeature == "codex_bengalfox" {
-			spark = a.RateLimit
+			rateLimit = a.RateLimit
 			break
 		}
 	}
-	if spark == nil {
+	return buildCodexRateLimitWindowExtraUpdates(rateLimit, now)
+}
+
+// buildCodexRateLimitWindowExtraUpdates converts a /wham/usage rate-limit
+// envelope into the canonical Extra snapshot consumed by account management.
+// Normalize classifies windows by duration, so primary/secondary ordering does
+// not determine which value is shown as 5h or 7d.
+func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.Time) map[string]any {
+	if rateLimit == nil {
 		return nil
 	}
-
 	// Reuse OpenAICodexUsageSnapshot / Normalize to map primary/secondary windows
 	// to canonical 5h/7d buckets (the same mapping used for passive response headers).
 	snap := &OpenAICodexUsageSnapshot{}
-	if w := spark.PrimaryWindow; w != nil {
+	if w := rateLimit.PrimaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.PrimaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)
@@ -568,7 +582,7 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 		wm := int(w.LimitWindowSeconds / 60)
 		snap.PrimaryWindowMinutes = &wm
 	}
-	if w := spark.SecondaryWindow; w != nil {
+	if w := rateLimit.SecondaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.SecondaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)

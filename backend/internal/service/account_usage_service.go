@@ -713,15 +713,15 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 
 	applyExtraToUsage(usage, account.Extra, now)
 
-	// Normal Codex OAuth accounts are passive-only: every real inference path
-	// persists the x-codex-* response headers. A quota screen refresh must not
-	// create a synthetic /responses turn with a second request identity. Spark
-	// shadows keep their read-only /wham/usage query because they have no direct
-	// inference response from which to sample the bengalfox window.
-	if account.IsShadow() && (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
+	// Refresh quota through Codex's read-only /wham/usage endpoint. Normal OAuth
+	// accounts use the main rate_limit envelope; Spark shadows use the separate
+	// codex_bengalfox envelope because their credentials resolve through the
+	// parent account. This avoids creating a synthetic /responses inference turn.
+	if account.IsOpenAIOAuth() && (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
 		if s.openAIQuotaService != nil {
 			if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
-				if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
+				updates := buildCodexQuotaWindowExtraUpdates(quotaUsage, account.IsShadow(), now)
+				if len(updates) > 0 {
 					mergeAccountExtra(account, updates)
 					s.persistOpenAICodexProbeSnapshot(account.ID, updates)
 					if usage.UpdatedAt == nil {
@@ -755,7 +755,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
-	if account == nil || !account.IsShadow() {
+	if account == nil || !account.IsOpenAIOAuth() {
 		return false
 	}
 	if usage == nil {
@@ -774,8 +774,8 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	if account == nil || !account.IsOpenAIOAuth() {
 		return false
 	}
-	// Spark shadows use the read-only /wham/usage bengalfox channel and have no
-	// direct inference response to refresh this timestamp.
+	// Both normal OAuth and Spark shadow snapshots use this timestamp. Real
+	// inference responses may refresh normal accounts between WHAM reads.
 	if account.Extra == nil {
 		return true
 	}
