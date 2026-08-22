@@ -262,6 +262,10 @@ gateway:
   #
   # 默认 false（即归一化开启）；仅当上游调整分桶、使归一化反而落入降载桶时才置 true。
   disable_codex_originator_normalization: false
+  # Optional deployment scope for deterministic Codex OAuth device identities.
+  # Leave empty for a one-time random value persisted under DATA_DIR (/app/data
+  # in Docker). Replicas serving one deployment must share the same value or data volume.
+  codex_fingerprint_deployment_salt: ""
   # Enable Codex image-generation bridge injection for /openai/v1/responses.
   # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
   #

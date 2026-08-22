@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,36 @@ import (
 // 构造器读取用于出站头改写——请求体与出站头必须共享同一份 IDs，保证
 // turn_id 等随机字段一致。
 const codexFingerprintIDsContextKey = "codex_fingerprint_ids"
+
+var codexFingerprintDeploymentScope = func() *atomic.Value {
+	v := &atomic.Value{}
+	v.Store(sha256.Sum256([]byte("codex-fingerprint-default-deployment")))
+	return v
+}()
+
+// SetCodexFingerprintDeploymentSalt binds deterministic account identities to
+// one deployment. Only the salt digest is retained in process memory.
+func SetCodexFingerprintDeploymentSalt(salt string) {
+	salt = strings.TrimSpace(salt)
+	if salt == "" {
+		salt = "codex-fingerprint-default-deployment"
+	}
+	codexFingerprintDeploymentScope.Store(sha256.Sum256([]byte(salt)))
+}
+
+func scopedCodexFingerprintSeed(namespace string, parts ...string) string {
+	scope := codexFingerprintDeploymentScope.Load().([32]byte)
+	var b strings.Builder
+	b.Grow(len(namespace) + len(scope) + len(parts)*40)
+	b.WriteString(namespace)
+	b.WriteByte(0)
+	b.Write(scope[:])
+	for _, part := range parts {
+		b.WriteByte(0)
+		b.WriteString(part)
+	}
+	return b.String()
+}
 
 // stageCodexFingerprintIDs 将本 attempt 解析出的收敛 ID 暂存到 gin context。
 // 必须无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一账号的
@@ -276,19 +307,20 @@ func deriveStableUUIDv7(seed string, timestampSources ...string) string {
 	return uuid.Must(uuid.FromBytes(b)).String()
 }
 
-// resolveConvergedInstallationID 返回账号级恒定的 installation_id。
-// 优先使用管理员配置的真实 device_id，无则从系统管理的账号随机种子确定性派生。
+// resolveConvergedInstallationID 返回部署域内账号级恒定的 installation_id。
+// 管理员配置的 device_id 只作为派生材料，避免原值直接出站。
 func resolveConvergedInstallationID(account *Account, seed string) string {
 	if account == nil {
 		return ""
 	}
-	if deviceID := account.GetOpenAIDeviceID(); deviceID != "" {
-		return deviceID
-	}
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-install-id:v2:" + seed)
+	return deriveStableUUIDv4(scopedCodexFingerprintSeed(
+		"codex-installation-id-v3",
+		seed,
+		account.GetOpenAIDeviceID(),
+	))
 }
 
 // resolveConvergedSessionID 返回账号级恒定的 session_id。
@@ -296,7 +328,7 @@ func resolveConvergedSessionID(seed string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7("sub2api:codex-session-id:v3:"+seed, seed)
+	return deriveStableUUIDv7(scopedCodexFingerprintSeed("codex-session-id-v4", seed), seed)
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生根 thread_id。
@@ -305,7 +337,11 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 	if seed == "" || clientSessionID == "" {
 		return ""
 	}
-	return deriveStableUUIDv7("sub2api:codex-thread-id:v3:"+seed+":"+clientSessionID, clientSessionID, seed)
+	return deriveStableUUIDv7(
+		scopedCodexFingerprintSeed("codex-thread-id-v4", seed, clientSessionID),
+		clientSessionID,
+		seed,
+	)
 }
 
 // codexFingerprintIDs 收敛后的完整 ID 集合。
