@@ -297,21 +297,19 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	oauthAccount := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKeyAccount := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 
-	t.Run("oauth_plain_request_without_capability_stays_absent", func(t *testing.T) {
+	t.Run("oauth_plain_request_gets_canonical_default", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Empty(t, h.Get("x-codex-beta-features"),
-			"普通请求不得替客户端虚构 beta 能力")
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
 	})
 
-	t.Run("client_declared_header_preserved", func(t *testing.T) {
+	t.Run("oauth_client_declared_header_rebuilt", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "some_other_feature", h.Get("x-codex-beta-features"),
-			"客户端显式声明的能力集不得被网关改写")
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
 	})
 
 	t.Run("native_v2_forces_feature_even_when_client_trimmed_it", func(t *testing.T) {
@@ -320,9 +318,7 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Contains(t, h.Get("x-codex-beta-features"), "remote_compaction_v2",
-			"body 带 compaction_trigger 是实锤，必须确保 v2 在列")
-		require.Contains(t, h.Get("x-codex-beta-features"), "some_other_feature")
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
 	})
 
 	t.Run("native_v2_applies_to_non_oauth_too", func(t *testing.T) {
@@ -349,7 +345,7 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	})
 }
 
-func TestBuildOpenAIWSHeaders_PreservesClientBetaFeatures(t *testing.T) {
+func TestBuildOpenAIWSHeaders_ConvergesOAuthBetaFeatures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
 	decision := OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2}
@@ -377,12 +373,10 @@ func TestBuildOpenAIWSHeaders_PreservesClientBetaFeatures(t *testing.T) {
 	}
 
 	headers := build(t, oauthAccount, "")
-	require.Empty(t, headers.Get("x-codex-beta-features"),
-		"普通 WS 握手不得合成客户端未声明的 beta")
+	require.Equal(t, "remote_compaction_v2", headers.Get("x-codex-beta-features"))
 
 	declared := build(t, oauthAccount, "some_other_feature")
-	require.Equal(t, []string{"some_other_feature"}, declared.Values("x-codex-beta-features"),
-		"客户端已声明时原样保留")
+	require.Equal(t, []string{"remote_compaction_v2"}, declared.Values("x-codex-beta-features"))
 
 	apiKeyHeaders := build(t, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "")
 	require.Empty(t, apiKeyHeaders.Get("x-codex-beta-features"),

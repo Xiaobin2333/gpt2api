@@ -2962,9 +2962,10 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("X-Codex-Beta-Features", "downstream_marker")
 
 	svc := &OpenAIGatewayService{}
-	account := &Account{Type: AccountTypeOAuth}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token")
 	require.NoError(t, err)
@@ -2972,6 +2973,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Empty(t, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
 	require.Empty(t, req.Header.Get("Session-Id"))
 	require.Empty(t, req.Header.Get("Session_Id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
@@ -3004,6 +3006,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -3014,6 +3017,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Empty(t, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
 	require.Empty(t, req.Header.Get("session-id"))
 	require.Empty(t, req.Header.Get("session_id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
@@ -3039,6 +3043,7 @@ func TestOpenAIBuildUpstreamRequestOAuthDoesNotForwardLegacyResponsesBeta(t *tes
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "", true)
 	require.NoError(t, err)
 	require.Empty(t, req.Header.Values("OpenAI-Beta"))
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {
@@ -3052,6 +3057,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -3062,6 +3068,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 	require.Empty(t, req.Header.Get("session_id"))
 	require.Empty(t, req.Header.Get("conversation_id"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
 	require.Empty(t, req.Header.Get("originator"))
 }
 

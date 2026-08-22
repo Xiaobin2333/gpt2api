@@ -56,11 +56,25 @@ func ensureOpenAIRemoteCompactionV2BetaFeature(h http.Header) {
 	h.Set("x-codex-beta-features", strings.Join(tokens, ","))
 }
 
-// applyOpenAICodexBetaFeatures 只在请求已由 handler 识别为原生 v2 压缩回合时
-// 补齐 remote_compaction_v2。普通请求保留客户端携带的能力集合；客户端没有
-// 声明时也保持缺失，避免代理替未知客户端虚构会话级实验能力。
-func applyOpenAICodexBetaFeatures(c *gin.Context, _ *Account, h http.Header) {
+// applyOpenAICodexBetaFeatures rebuilds the session-scoped feature header for
+// Codex OAuth Responses traffic. Codex 0.148.0 enables RemoteCompactionV2 by
+// default and advertises it on every ModelClient request. Downstream feature
+// tokens belong to a different client session and must not cross the shared
+// OAuth credential boundary.
+//
+// Non-OAuth upstreams retain their existing headers. A native compaction turn
+// still advertises its required capability when sent through those upstreams.
+func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Header) {
 	if h == nil {
+		return
+	}
+	if account != nil && account.IsOpenAIOAuth() {
+		for key := range h {
+			if strings.EqualFold(strings.TrimSpace(key), "x-codex-beta-features") {
+				delete(h, key)
+			}
+		}
+		h.Set("x-codex-beta-features", openAIRemoteCompactionV2Feature)
 		return
 	}
 	if isOpenAINativeCompactionV2(c) {
