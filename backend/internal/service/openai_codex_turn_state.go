@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ const openAICodexTurnStateHeader = "x-codex-turn-state"
 // 账号，出站守卫据此剥离已知异账号的回带值。
 type openAICodexTurnStateOrigin struct {
 	accountID int64
+	stateHash [sha256.Size]byte
 	expiresAt time.Time
 }
 
@@ -56,7 +58,7 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 		return
 	}
 	c.Writer.Header().Set(canonical, state)
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateProvenance(c, account, state)
 }
 
 // stageOpenAICodexTurnState 将上游 turn-state 暂存到延迟提交的响应头集合
@@ -86,10 +88,11 @@ func stageOpenAICodexTurnState(dst *http.Header, upstream http.Header) {
 // 铸造账号——只有此刻客户端才确定收到了该 blob，溯源表才与客户端持有的
 // 值一致（否则被 failover 丢弃的 attempt 会污染溯源，导致后续误剥离）。
 func (s *OpenAIGatewayService) noteStagedOpenAICodexTurnStateCommitted(c *gin.Context, account *Account, staged http.Header) {
-	if staged == nil || strings.TrimSpace(staged.Get(openAICodexTurnStateHeader)) == "" {
+	state := extractOpenAICodexTurnState(staged)
+	if state == "" {
 		return
 	}
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateProvenance(c, account, state)
 }
 
 func extractOpenAICodexTurnState(upstream http.Header) string {
@@ -99,9 +102,10 @@ func extractOpenAICodexTurnState(upstream http.Header) string {
 	return strings.TrimSpace(upstream.Get(openAICodexTurnStateHeader))
 }
 
-// noteOpenAICodexTurnStateProvenance 记录（下游会话 → 铸造账号）。
-func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context, account *Account) {
-	if s == nil || account == nil || account.ID <= 0 {
+// noteOpenAICodexTurnStateProvenance 记录（下游会话 → 铸造账号 + blob 摘要）。
+func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context, account *Account, state string) {
+	state = strings.TrimSpace(state)
+	if s == nil || account == nil || account.ID <= 0 || state == "" {
 		return
 	}
 	seed := openAICodexTurnStateSeed(c)
@@ -110,40 +114,50 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 	}
 	s.openaiCodexTurnStateOrigins.Store(seed, openAICodexTurnStateOrigin{
 		accountID: account.ID,
+		stateHash: sha256.Sum256([]byte(state)),
 		expiresAt: time.Now().Add(s.openAIWSSessionStickyTTL()),
 	})
 	s.sweepOpenAICodexTurnStateOrigins()
 }
 
-// guardOpenAICodexTurnStateEcho 出站守卫：客户端回带的 turn-state 若已知由
-// 其他账号铸造则剥离，同账号或无溯源记录时保持原样。只剥离、不注入——
-// /responses 路径的客户端是真实 Codex，会按自身回合语义自行回带；服务端
-// 注入是 Claude 兼容桥（无法回带的客户端）的专属行为。
+// guardOpenAICodexTurnStateEcho 出站守卫：只允许同一 API key 会话从同一账号
+// 收到、仍在有效期内且 blob 摘要完全相同的 turn-state 回带。任何来源条件
+// 缺失都剥离；只剥离、不注入。
 func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, account *Account, h http.Header) {
-	if s == nil || h == nil || account == nil {
+	if h == nil {
 		return
 	}
-	if strings.TrimSpace(h.Get(openAICodexTurnStateHeader)) == "" {
+	state := strings.TrimSpace(h.Get(openAICodexTurnStateHeader))
+	if state == "" {
+		h.Del(openAICodexTurnStateHeader)
+		return
+	}
+	if s == nil || account == nil || account.ID <= 0 {
+		h.Del(openAICodexTurnStateHeader)
 		return
 	}
 	seed := openAICodexTurnStateSeed(c)
 	if seed == "" {
+		h.Del(openAICodexTurnStateHeader)
 		return
 	}
 	raw, ok := s.openaiCodexTurnStateOrigins.Load(seed)
 	if !ok {
+		h.Del(openAICodexTurnStateHeader)
 		return
 	}
 	origin, ok := raw.(openAICodexTurnStateOrigin)
 	if !ok {
 		s.openaiCodexTurnStateOrigins.Delete(seed)
+		h.Del(openAICodexTurnStateHeader)
 		return
 	}
 	if !origin.expiresAt.IsZero() && time.Now().After(origin.expiresAt) {
 		s.openaiCodexTurnStateOrigins.Delete(seed)
+		h.Del(openAICodexTurnStateHeader)
 		return
 	}
-	if origin.accountID != account.ID {
+	if origin.accountID != account.ID || origin.stateHash != sha256.Sum256([]byte(state)) {
 		h.Del(openAICodexTurnStateHeader)
 	}
 }
