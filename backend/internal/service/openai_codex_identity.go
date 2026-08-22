@@ -243,11 +243,19 @@ func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthReq
 	if identity.windowID != "" {
 		h.Set("x-codex-window-id", identity.windowID)
 	}
-	h.Del("x-codex-installation-id")
 	if compact {
+		if identity.installationID != "" {
+			h.Set("x-codex-installation-id", identity.installationID)
+		} else {
+			h.Del("x-codex-installation-id")
+		}
 		h.Del("x-client-request-id")
 		return
 	}
+	// Normal HTTP and WebSocket requests carry installation identity in
+	// client_metadata. The legacy unary compact endpoint is the only current
+	// Codex request that carries it as a direct header.
+	h.Del("x-codex-installation-id")
 }
 
 func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body []byte, promptCacheKey string) ([]byte, error) {

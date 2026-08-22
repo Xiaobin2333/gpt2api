@@ -48,7 +48,7 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 
 		applyCodexOAuthRequestIdentityHeaders(h, identity, true)
 
-		require.Empty(t, h.Get("x-codex-installation-id"))
+		require.Equal(t, identity.installationID, h.Get("x-codex-installation-id"))
 		require.Empty(t, h.Get("x-client-request-id"))
 	})
 }
