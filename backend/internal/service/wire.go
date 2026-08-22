@@ -178,15 +178,20 @@ func ProvideOpenAITokenProvider(
 
 // ProvideOpenAIQuotaService wires the OpenAI quota query/reset service.
 // It depends on the OpenAI token provider for refreshed access tokens and the
-// privacy client factory for the impersonated upstream HTTP client.
+// Codex HTTP client factory used by the official backend client.
 func ProvideOpenAIQuotaService(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	tokenProvider *OpenAITokenProvider,
-	privacyClientFactory PrivacyClientFactory,
+	codexAuthClientFactory OpenAICodexAuthClientFactory,
 	openAIGatewayService *OpenAIGatewayService,
 ) *OpenAIQuotaService {
-	service := NewOpenAIQuotaService(accountRepo, proxyRepo, tokenProvider, privacyClientFactory)
+	service := NewOpenAIQuotaService(
+		accountRepo,
+		proxyRepo,
+		tokenProvider,
+		PrivacyClientFactory(codexAuthClientFactory),
+	)
 	service.agentIdentityWS = openAIGatewayService
 	return service
 }

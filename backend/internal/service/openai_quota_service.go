@@ -105,15 +105,15 @@ type OpenAIQuotaResetResult struct {
 }
 
 // OpenAIQuotaService queries and consumes ChatGPT/Codex rate-limit reset credits
-// for OpenAI OAuth accounts. It reuses the privacy client factory so all calls
-// flow through the impersonated HTTP client (Cloudflare-friendly TLS fingerprint).
+// for OpenAI OAuth accounts. WHAM is a Codex backend endpoint, so its client
+// factory must use the same HTTP transport profile as other Codex requests.
 type OpenAIQuotaService struct {
-	accountRepo          AccountRepository
-	proxyRepo            ProxyRepository
-	tokenProvider        *OpenAITokenProvider
-	privacyClientFactory PrivacyClientFactory
-	agentIdentityTaskMu  sync.Mutex
-	agentIdentityWS      agentIdentityWSConnectionInvalidator
+	accountRepo         AccountRepository
+	proxyRepo           ProxyRepository
+	tokenProvider       *OpenAITokenProvider
+	codexClientFactory  PrivacyClientFactory
+	agentIdentityTaskMu sync.Mutex
+	agentIdentityWS     agentIdentityWSConnectionInvalidator
 }
 
 // NewOpenAIQuotaService constructs a quota service. token provider is required —
@@ -123,13 +123,13 @@ func NewOpenAIQuotaService(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	tokenProvider *OpenAITokenProvider,
-	privacyClientFactory PrivacyClientFactory,
+	codexClientFactory PrivacyClientFactory,
 ) *OpenAIQuotaService {
 	return &OpenAIQuotaService{
-		accountRepo:          accountRepo,
-		proxyRepo:            proxyRepo,
-		tokenProvider:        tokenProvider,
-		privacyClientFactory: privacyClientFactory,
+		accountRepo:        accountRepo,
+		proxyRepo:          proxyRepo,
+		tokenProvider:      tokenProvider,
+		codexClientFactory: codexClientFactory,
 	}
 }
 
@@ -142,7 +142,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		return nil, err
 	}
 
-	client, err := s.privacyClientFactory(proxyURL)
+	client, err := s.codexClientFactory(proxyURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_CLIENT_ERROR", "failed to build upstream client: %v", err)
 	}
@@ -296,7 +296,7 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_QUOTA_REDEEM_ID_FAILED", "failed to generate redeem id: %v", err)
 	}
 
-	client, err := s.privacyClientFactory(proxyURL)
+	client, err := s.codexClientFactory(proxyURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_CLIENT_ERROR", "failed to build upstream client: %v", err)
 	}
@@ -349,7 +349,7 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 // token via the shared TokenProvider, and resolves the chatgpt-account-id and
 // proxy URL. Centralized so QueryUsage / ResetCredit share validation.
 func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID int64) (accessToken, chatGPTAccountID, proxyURL string, fedRAMP bool, err error) {
-	if s == nil || s.accountRepo == nil || s.privacyClientFactory == nil {
+	if s == nil || s.accountRepo == nil || s.codexClientFactory == nil {
 		return "", "", "", false, infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_NOT_CONFIGURED", "openai quota service is not configured")
 	}
 
