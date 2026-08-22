@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -70,6 +71,35 @@ func TestResolveCodexOAuthRequestIdentityPreservesExistingValues(t *testing.T) {
 	require.Equal(t, "legacy-session", identity.sessionID)
 	require.Equal(t, "legacy-thread", identity.threadID)
 	require.Empty(t, identity.windowID)
+}
+
+func TestCodexOAuthMissingSeedNeverEmitsRawDeviceID(t *testing.T) {
+	t.Cleanup(func() { SetCodexFingerprintDeploymentSalt("") })
+	SetCodexFingerprintDeploymentSalt(strings.Repeat("d", 32))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	account := &Account{
+		ID:       17,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintDevice),
+			"openai_device_id":           "raw-device-id",
+		},
+	}
+	body := []byte(`{"model":"gpt-5.6-sol","client_metadata":{"x-codex-installation-id":"downstream-installation"}}`)
+
+	normalized, err := normalizeCodexOAuthRequestMetadata(c, account, body, "")
+	require.NoError(t, err)
+	installationID := gjson.GetBytes(normalized, "client_metadata.x-codex-installation-id").String()
+	require.NotEmpty(t, installationID)
+	require.NotEqual(t, "raw-device-id", installationID)
+	require.NotEqual(t, "downstream-installation", installationID)
+
+	headers := make(http.Header)
+	identity := resolveCodexOAuthRequestIdentity(c, account, headers, normalized, "")
+	applyCodexOAuthRequestIdentityHeaders(headers, identity, true)
+	require.Equal(t, installationID, headers.Get("x-codex-installation-id"))
 }
 
 func TestCanonicalCodexRequestWindowIDPreservesOfficialCounter(t *testing.T) {

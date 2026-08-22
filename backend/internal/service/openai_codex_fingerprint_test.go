@@ -210,7 +210,9 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored(t *testing.T
 	}
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_EnabledModesUseDeploymentFallbackSeed(t *testing.T) {
+	t.Cleanup(func() { SetCodexFingerprintDeploymentSalt("") })
+	SetCodexFingerprintDeploymentSalt(strings.Repeat("f", 32))
 	for _, tt := range []struct {
 		name  string
 		extra map[string]any
@@ -224,9 +226,35 @@ func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *t
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: tt.extra}
-			require.Nil(t, resolveCodexFingerprintIDsFromRequest(account, nil))
+			ids := resolveCodexFingerprintIDsFromRequest(account, nil)
+			require.NotNil(t, ids)
+			require.NotEmpty(t, ids.installationID)
+			require.NotEqual(t, account.GetOpenAIDeviceID(), ids.installationID)
 		})
 	}
+}
+
+func TestCodexFingerprintMissingSeedFallbackIsDeploymentScoped(t *testing.T) {
+	t.Cleanup(func() { SetCodexFingerprintDeploymentSalt("") })
+	account := &Account{
+		ID:       9,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintDevice),
+			"openai_device_id":           "legacy-device-id",
+		},
+	}
+
+	SetCodexFingerprintDeploymentSalt(strings.Repeat("a", 32))
+	first := resolveCodexFingerprintIDsFromRequest(account, nil)
+	require.NotNil(t, first)
+	require.NotEqual(t, "legacy-device-id", first.installationID)
+
+	SetCodexFingerprintDeploymentSalt(strings.Repeat("b", 32))
+	second := resolveCodexFingerprintIDsFromRequest(account, nil)
+	require.NotNil(t, second)
+	require.NotEqual(t, first.installationID, second.installationID)
 }
 
 // --- applyCodexFingerprintHeaders: off 模式 ---

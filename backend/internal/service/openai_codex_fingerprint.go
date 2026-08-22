@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -179,6 +180,28 @@ func codexFingerprintSeed(extra map[string]any) (string, bool) {
 		return "", false
 	}
 	return canonicalCodexFingerprintSeed(extra[codexFingerprintSeedExtraKey])
+}
+
+// codexFingerprintSeedForConvergence keeps the outbound identity closed even
+// while an old or partially imported OAuth account is waiting for repository
+// seed repair. The fallback is deployment-scoped and never leaves the process;
+// once the managed seed exists, the normal per-account identity takes over.
+func codexFingerprintSeedForConvergence(account *Account) (string, bool) {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return "", false
+	}
+	if seed, ok := codexFingerprintSeed(account.Extra); ok {
+		return seed, true
+	}
+	deviceID := account.GetOpenAIDeviceID()
+	if account.ID <= 0 && deviceID == "" {
+		return "", false
+	}
+	return deriveStableUUIDv4(scopedCodexFingerprintSeed(
+		"codex-missing-account-seed-v1",
+		strconv.FormatInt(account.ID, 10),
+		deviceID,
+	)), true
 }
 
 func prepareCodexFingerprintExtraForCreate(platform, accountType string, extra map[string]any) map[string]any {
@@ -370,7 +393,7 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 	if account == nil || mode == codexFingerprintOff {
 		return nil
 	}
-	seed, ok := codexFingerprintSeed(account.Extra)
+	seed, ok := codexFingerprintSeedForConvergence(account)
 	if !ok {
 		return nil
 	}

@@ -160,10 +160,8 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.installationID = strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
 	}
 	if identity.installationID == "" && account != nil {
-		if seed, ok := codexFingerprintSeed(account.Extra); ok {
+		if seed, ok := codexFingerprintSeedForConvergence(account); ok {
 			identity.installationID = resolveConvergedInstallationID(account, seed)
-		} else {
-			identity.installationID = account.GetOpenAIDeviceID()
 		}
 	}
 	if identity.sessionID == "" {
