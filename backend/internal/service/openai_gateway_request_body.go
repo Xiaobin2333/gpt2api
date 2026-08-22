@@ -442,6 +442,14 @@ func IsForwardableOpenAIOAuthResponsesRequestPath(c *gin.Context) bool {
 }
 
 func openAIResponsesRequestPathSuffixForAccount(c *gin.Context, account *Account) (string, error) {
+	// Some gateway entrypoints (for example /v1/messages and /v1/chat/completions)
+	// translate their request into a Responses payload internally. They have no
+	// client-controlled Responses suffix and therefore target bare /responses.
+	// Keep the strict path checks below for actual /responses ingress only.
+	if c == nil || c.Request == nil || c.Request.URL == nil ||
+		!strings.Contains(strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/"), "/responses") {
+		return "", nil
+	}
 	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
 	if !recognized {
 		return "", fmt.Errorf("unsupported responses path")

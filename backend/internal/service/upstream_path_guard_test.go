@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -180,7 +181,11 @@ func TestIsForwardableOpenAIOAuthResponsesRequestPath(t *testing.T) {
 
 func TestOpenAIOAuthRequestBuildersRejectUnknownResponsesSubpaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		}},
+	}
 	account := &Account{
 		ID:       42,
 		Platform: PlatformOpenAI,
@@ -207,6 +212,48 @@ func TestOpenAIOAuthRequestBuildersRejectUnknownResponsesSubpaths(t *testing.T) 
 	req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "", false)
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
+}
+
+func TestOpenAIRequestBuildersUseBareResponsesForTranslatedIngress(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		}},
+	}
+	body := []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`)
+
+	accounts := []*Account{
+		{
+			ID:       43,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"chatgpt_account_id": "account-43",
+			},
+		},
+		{
+			ID:       44,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key": "sk-test",
+			},
+		},
+	}
+
+	for _, account := range accounts {
+		for _, path := range []string{"/v1/messages", "/v1/chat/completions"} {
+			c := newResponsesSuffixTestContext(t, path)
+			req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "", false)
+			require.NoError(t, err, "account_type=%s path=%s", account.Type, path)
+			if account.IsOpenAIOAuth() {
+				require.Equal(t, chatgptCodexURL, req.URL.String())
+			} else {
+				require.Equal(t, openaiPlatformAPIURL, req.URL.String())
+			}
+		}
+	}
 }
 
 func TestIsOpenAIResponsesCompactPathUsesLegacyEndpointShape(t *testing.T) {
