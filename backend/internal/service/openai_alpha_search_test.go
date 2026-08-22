@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -118,7 +119,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	c.Request.Header.Set("X-Codex-Beta-Features", "feature-a")
 	c.Request.Header.Set("X-Codex-Turn-State", "turn-state")
 	c.Request.Header.Set(responsesLiteHeaderKey, "true")
-	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"turn_id":"turn-1"}`)
+	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"turn_id":"turn-1","cwd":"/private/work","git_branch":"secret"}`)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -161,6 +162,13 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Turn-State"))
 	require.Empty(t, upstream.lastReq.Header.Get(responsesLiteHeaderKey))
 	require.Empty(t, upstream.lastReq.Header.Get("Accept-Language"))
+	sessionID := upstream.lastReq.Header.Get("session-id")
+	parsedSessionID, parseErr := uuid.Parse(sessionID)
+	require.NoError(t, parseErr)
+	require.Equal(t, uuid.Version(7), parsedSessionID.Version())
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
+	require.NotEqual(t, 16, len(sessionID), "legacy gateway session hash must not reach upstream")
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_retention").Exists())
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.lastBody, "model").String())

@@ -228,8 +228,8 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	if gotOriginator != openai.CodexDefaultOriginator {
 		t.Errorf("originator header: got %q", gotOriginator)
 	}
-	if gotClientVersion != "0.137.0" {
-		t.Errorf("client_version query: got %q", gotClientVersion)
+	if gotClientVersion != CodexCanonicalClientVersion() {
+		t.Errorf("client_version query: got %q, want canonical %q", gotClientVersion, CodexCanonicalClientVersion())
 	}
 	if gotVersionHeader != "" {
 		t.Errorf("OAuth models request must not send Version header: got %q", gotVersionHeader)

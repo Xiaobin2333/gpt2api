@@ -307,17 +307,18 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatc
 
 	require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
 
-	// 显式 session 收敛模式：出站身份 = 账号级收敛值
+	// 显式 session 收敛模式：只改写探针实际携带的 session-id。
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	converged := resolveConvergedThreadID(seed, compactProbeSessionID(account.ID))
-	require.Empty(t, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, converged, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, converged, upstream.lastReq.Header.Get("session-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
 	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("thread-id"))
-	require.Equal(t, converged+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-window-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("x-codex-turn-metadata"))
-	require.NotContains(t, upstream.lastReq.Header.Get("session_id"), "probe_compact",
+	require.NotContains(t, upstream.lastReq.Header.Get("session-id"), "probe_compact",
 		"探测标识不得是可被上游一眼识别的字面量")
 	<-updateCalls
 }

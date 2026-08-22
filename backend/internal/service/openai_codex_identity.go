@@ -480,7 +480,9 @@ func ensureCodexIdentityHeaders(h http.Header) {
 	h.Del("version")
 }
 
-// applyOpenAICodexProbeHeaders 为合成探测请求补齐 Codex 身份和引擎指纹。
+// applyOpenAICodexProbeHeaders 为合成探测请求补齐 Codex 身份和 API Key
+// 兼容协商。会话/window/installation 等载体由具体调用方按真实来源设置，
+// 这里不生成每次变化的代理身份。
 func applyOpenAICodexProbeHeaders(h http.Header) {
 	if h == nil {
 		return
@@ -490,7 +492,6 @@ func applyOpenAICodexProbeHeaders(h http.Header) {
 	// 当前 Codex HTTP 行为移除该 token。
 	h.Set("Version", CodexCanonicalClientVersion())
 	h.Set("OpenAI-Beta", "responses=experimental")
-	h.Set("X-Codex-Window-ID", uuid.NewString())
 }
 
 // enforceCodexIdentityHeaders 收口 OAuth（ChatGPT 内部接口）出站请求的客户端身份头。

@@ -776,6 +776,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	credentialAccount.ApplyHeaderOverrides(req.Header)
+	if isOAuth {
+		sanitizeCodexOAuthOutboundHeaders(req.Header)
+	}
 
 	// Get proxy URL
 	proxyURL := ""
@@ -2099,15 +2102,13 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		stripOpenAILegacyResponsesBeta(req.Header)
 	}
 	probeSessionID := compactProbeSessionID(account.ID)
-	req.Header.Set("Session_ID", probeSessionID)
-	req.Header.Set("Conversation_ID", probeSessionID)
+	req.Header.Set("session-id", probeSessionID)
 
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
-		// 指纹收敛：探测与真实转发走同一个 /responses 端点，身份也必须同构，
-		// 否则探测流量会以「缺 x-codex-installation-id + 非收敛 session」的
-		// 形态暴露在上游眼里。账号关闭收敛（off）时返回 nil，探测保持原样。
+		// 指纹收敛只改写探针实际携带的 session-id，不补造 installation、
+		// thread、turn 或 window 载体。
 		if fpIDs := resolveCodexFingerprintIDsFromRequest(account, req.Header); fpIDs != nil {
 			applyCodexFingerprintHeaders(req.Header, fpIDs)
 		}
@@ -2115,6 +2116,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)
+	if isOAuth {
+		sanitizeCodexOAuthOutboundHeaders(req.Header)
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

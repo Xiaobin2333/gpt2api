@@ -252,6 +252,10 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	appendModelsPath := false
 	switch {
 	case credAccount.IsOpenAIOAuth():
+		// Official Codex derives this query value from its compile-time version.
+		// Do not expose a downstream client's independent version on the shared
+		// OAuth credential path.
+		clientVersion = CodexCanonicalClientVersion()
 		authToken = strings.TrimSpace(credAccount.GetOpenAIAccessToken())
 		if authToken == "" && !credAccount.IsOpenAIAgentIdentity() {
 			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
