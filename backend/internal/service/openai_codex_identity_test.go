@@ -181,7 +181,7 @@ func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {
 	require.Equal(t, openai.CodexDefaultOriginator, h.Get("Originator"))
 	require.Equal(t, codexCLIVersion, h.Get("Version"))
 	require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
-	require.NotEmpty(t, h.Get("X-Codex-Window-ID"))
+	require.Empty(t, h.Get("X-Codex-Window-ID"))
 }
 
 // 强制统一出口：无论客户端自报什么身份，OAuth 出站的 User-Agent / originator
