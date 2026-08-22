@@ -1232,7 +1232,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeade
 	bodyTurnMetadata := gjson.Get(forwarded, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := captureDialer.lastHeaders.Get(openAIWSTurnMetadataHeader)
 	require.Empty(t, bodyTurnMetadata, forwarded)
-	require.Equal(t, "turn-meta-1", headerTurnMetadata)
+	require.Empty(t, headerTurnMetadata, "opaque non-JSON turn metadata must not cross the OAuth boundary")
 	require.False(t, gjson.Get(forwarded, `tools.#(type=="namespace")`).Exists())
 	require.Equal(t, "collaboration", gjson.Get(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.Get(forwarded, "tool_choice.type").String())
