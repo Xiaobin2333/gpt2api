@@ -2125,7 +2125,7 @@ func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyO
 	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").Exists())
 	require.Empty(t, upstream.lastReq.Header.Get("thread-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("x-codex-window-id"))
-	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, staleIDs.installationID, upstream.lastReq.Header.Get("x-codex-installation-id"))
 }
 
 func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPromptCacheKey(t *testing.T) {
