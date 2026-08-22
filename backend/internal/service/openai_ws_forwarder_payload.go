@@ -111,22 +111,13 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	// 之外：该头是账号/会话级属性，不依赖入站请求是否存在，也避免预热与
 	// 实际请求因头差异落进不同的连接池兼容分桶。
 	applyOpenAICodexBetaFeatures(c, account, headers)
-	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
-	if account != nil && account.Type == AccountTypeOAuth {
-		apiKeyID := getAPIKeyIDFromContext(c)
-		if sessionResolution.SessionID != "" {
-			headers.Set("session_id", isolateOpenAISessionID(apiKeyID, sessionResolution.SessionID))
-		}
-		if sessionResolution.ConversationID != "" {
-			headers.Set("conversation_id", isolateOpenAISessionID(apiKeyID, sessionResolution.ConversationID))
-		}
-	} else {
-		if sessionResolution.SessionID != "" {
-			headers.Set("session_id", sessionResolution.SessionID)
-		}
-		if sessionResolution.ConversationID != "" {
-			headers.Set("conversation_id", sessionResolution.ConversationID)
-		}
+	// 保留客户端已有会话值。OAuth 的最终身份收口会将其映射到官方使用的
+	// session-id；不要先编码成网关私有的 16 位哈希形态。
+	if sessionResolution.SessionID != "" {
+		headers.Set("session_id", sessionResolution.SessionID)
+	}
+	if sessionResolution.ConversationID != "" {
+		headers.Set("conversation_id", sessionResolution.ConversationID)
 	}
 	if state := strings.TrimSpace(turnState); state != "" {
 		headers.Set(openAIWSTurnStateHeader, state)

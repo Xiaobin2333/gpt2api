@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -32,7 +30,7 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 
 		require.Equal(t, identity.sessionID, h.Get("session-id"))
 		require.Equal(t, identity.threadID, h.Get("thread-id"))
-		require.Equal(t, identity.threadID, h.Get("x-client-request-id"))
+		require.Empty(t, h.Get("x-client-request-id"))
 		require.Equal(t, identity.windowID, h.Get("x-codex-window-id"))
 		require.Empty(t, h.Get("session_id"))
 		require.Empty(t, h.Get("conversation_id"))
@@ -50,12 +48,12 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 
 		applyCodexOAuthRequestIdentityHeaders(h, identity, true)
 
-		require.Equal(t, identity.installationID, h.Get("x-codex-installation-id"))
+		require.Empty(t, h.Get("x-codex-installation-id"))
 		require.Empty(t, h.Get("x-client-request-id"))
 	})
 }
 
-func TestResolveCodexOAuthRequestIdentityCanonicalizesLegacySession(t *testing.T) {
+func TestResolveCodexOAuthRequestIdentityPreservesExistingValues(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Request.Header.Set("session_id", "legacy-session")
@@ -69,15 +67,9 @@ func TestResolveCodexOAuthRequestIdentityCanonicalizesLegacySession(t *testing.T
 
 	identity := resolveCodexOAuthRequestIdentity(c, &Account{}, c.Request.Header, body, "legacy-session")
 
-	require.NotEmpty(t, identity.sessionID)
-	require.NotEmpty(t, identity.threadID)
-	sessionID, err := uuid.Parse(identity.sessionID)
-	require.NoError(t, err)
-	threadID, err := uuid.Parse(identity.threadID)
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(7), sessionID.Version())
-	require.Equal(t, uuid.Version(7), threadID.Version())
-	require.Equal(t, identity.threadID+":0", identity.windowID)
+	require.Equal(t, "legacy-session", identity.sessionID)
+	require.Equal(t, "legacy-thread", identity.threadID)
+	require.Empty(t, identity.windowID)
 }
 
 func TestCanonicalCodexRequestWindowIDPreservesOfficialCounter(t *testing.T) {
@@ -102,51 +94,31 @@ func TestNormalizeCodexOAuthRequestMetadataKeepsIdentityCoherent(t *testing.T) {
 		},
 	}
 	wantTurnID := "019b8c36-4adf-7a04-82b3-bd93a6ed8be0"
-	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"74a0919d-14ba-41fb-b63f-918a938132d1","client_metadata":{"x-codex-turn-metadata":"{\"agent_name\":\"/workspace\",\"turn_id\":\"019b8c36-4adf-7a04-82b3-bd93a6ed8be0\",\"sandbox_mode\":\"workspace-write\",\"tool_namespaces_info\":{\"shell\":{\"name\":\"shell\"}}}"},"input":[]}`)
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"74a0919d-14ba-41fb-b63f-918a938132d1","client_metadata":{"x-codex-installation-id":"client-install","x-codex-turn-metadata":"{\"installation_id\":\"client-install\",\"agent_name\":\"/workspace\",\"turn_id\":\"019b8c36-4adf-7a04-82b3-bd93a6ed8be0\",\"sandbox_mode\":\"workspace-write\",\"tool_namespaces_info\":{\"shell\":{\"name\":\"shell\"}}}"},"input":[]}`)
 
 	normalized, err := normalizeCodexOAuthRequestMetadata(c, account, body, "74a0919d-14ba-41fb-b63f-918a938132d1")
 	require.NoError(t, err)
 
 	installID := gjson.GetBytes(normalized, "client_metadata.x-codex-installation-id").String()
-	sessionID := gjson.GetBytes(normalized, "client_metadata.session_id").String()
-	threadID := gjson.GetBytes(normalized, "client_metadata.thread_id").String()
-	turnID := gjson.GetBytes(normalized, "client_metadata.turn_id").String()
-	windowID := gjson.GetBytes(normalized, "client_metadata.x-codex-window-id").String()
 	require.NotEmpty(t, installID)
-	require.Equal(t, canonicalCodexRequestUUID(c, c.GetHeader("session-id")), sessionID)
-	require.Equal(t, canonicalCodexRequestUUID(c, c.GetHeader("thread-id")), threadID)
-	require.Equal(t, threadID+":0", windowID)
-	require.Equal(t, wantTurnID, turnID)
-	parsedSessionID, err := uuid.Parse(sessionID)
-	require.NoError(t, err)
-	parsedThreadID, err := uuid.Parse(threadID)
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(7), parsedSessionID.Version())
-	require.Equal(t, uuid.Version(7), parsedThreadID.Version())
-	_, err = uuid.Parse(turnID)
-	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(normalized, "client_metadata.session_id").Exists())
+	require.False(t, gjson.GetBytes(normalized, "client_metadata.thread_id").Exists())
+	require.False(t, gjson.GetBytes(normalized, "client_metadata.turn_id").Exists())
+	require.False(t, gjson.GetBytes(normalized, "client_metadata.x-codex-window-id").Exists())
 
 	metadata := gjson.Parse(gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String())
 	rawMetadata := gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String()
 	require.Equal(t, installID, metadata.Get("installation_id").String())
-	require.Equal(t, sessionID, metadata.Get("session_id").String())
-	require.Equal(t, threadID, metadata.Get("thread_id").String())
-	require.Equal(t, turnID, metadata.Get("turn_id").String())
-	require.Equal(t, windowID, metadata.Get("window_id").String())
-	require.Equal(t, "turn", metadata.Get("request_kind").String())
+	require.False(t, metadata.Get("session_id").Exists())
+	require.False(t, metadata.Get("thread_id").Exists())
+	require.Equal(t, wantTurnID, metadata.Get("turn_id").String())
+	require.False(t, metadata.Get("window_id").Exists())
+	require.False(t, metadata.Get("request_kind").Exists())
 	require.Equal(t, "/workspace", metadata.Get("agent_name").String())
 	require.Equal(t, "workspace-write", metadata.Get("sandbox_mode").String())
 	require.False(t, metadata.Get("root_turn_id").Exists())
 	require.True(t, metadata.Get("tool_namespaces_info.shell").Exists())
-	require.Less(t, strings.Index(rawMetadata, `"installation_id"`), strings.Index(rawMetadata, `"turn_id"`))
-	require.Less(t, strings.Index(rawMetadata, `"turn_id"`), strings.Index(rawMetadata, `"request_kind"`))
-	require.Less(t, strings.Index(rawMetadata, `"request_kind"`), strings.Index(rawMetadata, `"sandbox_mode"`))
-
-	headers := make(http.Header)
-	applyCodexOAuthTurnMetadataCompatibilityHeader(headers, normalized)
-	headerMetadata := gjson.Parse(headers.Get(openAIWSTurnMetadataHeader))
-	require.Equal(t, turnID, headerMetadata.Get("turn_id").String())
-	require.False(t, headerMetadata.Get("tool_namespaces_info").Exists())
+	require.Contains(t, rawMetadata, `"sandbox_mode":"workspace-write"`)
 }
 
 func TestDeviceConvergencePreservesOfficialSessionLifecycle(t *testing.T) {
@@ -181,7 +153,7 @@ func TestDeviceConvergencePreservesOfficialSessionLifecycle(t *testing.T) {
 	require.Empty(t, ids.windowID)
 	stageCodexFingerprintIDs(c, ids)
 
-	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"` + sessionID + `","client_metadata":{"session_id":"` + sessionID + `","thread_id":"` + threadID + `","turn_id":"` + turnID + `","x-codex-window-id":"` + windowID + `","x-codex-turn-metadata":"{\"session_id\":\"` + sessionID + `\",\"thread_id\":\"` + threadID + `\",\"turn_id\":\"` + turnID + `\",\"window_id\":\"` + windowID + `\",\"request_kind\":\"turn\"}"},"input":[]}`)
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"` + sessionID + `","client_metadata":{"x-codex-installation-id":"client-install","session_id":"` + sessionID + `","thread_id":"` + threadID + `","turn_id":"` + turnID + `","x-codex-window-id":"` + windowID + `","x-codex-turn-metadata":"{\"installation_id\":\"client-install\",\"session_id\":\"` + sessionID + `\",\"thread_id\":\"` + threadID + `\",\"turn_id\":\"` + turnID + `\",\"window_id\":\"` + windowID + `\",\"request_kind\":\"turn\"}"},"input":[]}`)
 	converged, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
 	require.True(t, changed)

@@ -266,8 +266,8 @@ func TestAccountTestService_TestAccountConnection_OpenAICompact2xxWithoutItemMar
 	require.Contains(t, rec.Body.String(), `"type":"error"`)
 }
 
-// 探测与真实转发走同一 /responses 端点，出站身份必须与真实 Codex 同构：
-// session/thread 为 UUID、携带 x-codex-installation-id（收敛账号用收敛值）。
+// 探测与真实转发走同一 /responses 端点，但只收敛探针确实携带的
+// session/window 载体；不得再补造 installation/thread/turn 身份。
 func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatchesRealTraffic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -311,11 +311,13 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatc
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	converged := resolveConvergedThreadID(seed, compactProbeSessionID(account.ID))
-	require.Equal(t, converged, upstream.lastReq.Header.Get("session-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, converged, upstream.lastReq.Header.Get("session_id"))
-	require.Equal(t, resolveConvergedInstallationID(&account, seed), upstream.lastReq.Header.Get("x-codex-installation-id"),
-		"真实 Codex 每个请求必带 installation-id，探测不得缺失")
-	require.NotContains(t, upstream.lastReq.Header.Get("session-id"), "probe_compact",
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, converged+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-turn-metadata"))
+	require.NotContains(t, upstream.lastReq.Header.Get("session_id"), "probe_compact",
 		"探测标识不得是可被上游一眼识别的字面量")
 	<-updateCalls
 }

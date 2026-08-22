@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -425,8 +426,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		return
 	}
 
-	// 所有非 off 模式都收敛 installation_id
-	h.Set("x-codex-installation-id", ids.installationID)
+	setCodexHeaderIfPresent(h, "x-codex-installation-id", ids.installationID)
 
 	if ids.mode == codexFingerprintDevice {
 		rewriteCodexTurnMetadataFields(h, map[string]any{
@@ -435,13 +435,12 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		return
 	}
 
-	// session / full 模式：改写所有相关头
-	h.Set("x-codex-window-id", ids.windowID)
-	h.Set("x-client-request-id", ids.threadID)
-	// 连字符形式和下划线形式都改写，保证一致
-	h.Set("session-id", ids.sessionID)
-	h.Set("session_id", ids.sessionID)
-	h.Set("thread-id", ids.threadID)
+	// session / full 模式只改写客户端原本发送的载体；缺失字段不补造。
+	setCodexHeaderIfPresent(h, "x-codex-window-id", ids.windowID)
+	setCodexHeaderIfPresent(h, "x-client-request-id", ids.threadID)
+	setCodexHeaderIfPresent(h, "session-id", ids.sessionID)
+	setCodexHeaderIfPresent(h, "session_id", ids.sessionID)
+	setCodexHeaderIfPresent(h, "thread-id", ids.threadID)
 
 	rewriteCodexTurnMetadataFields(h, map[string]any{
 		"installation_id":         ids.installationID,
@@ -453,9 +452,16 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	})
 }
 
+func setCodexHeaderIfPresent(h http.Header, key, value string) bool {
+	if h == nil || strings.TrimSpace(h.Get(key)) == "" || value == "" || h.Get(key) == value {
+		return false
+	}
+	h.Set(key, value)
+	return true
+}
+
 // rewriteCodexTurnMetadataFields 解析 x-codex-turn-metadata 头中的 JSON，
-// 替换指定字段后回写。合法对象保留未指定字段（如 sandbox、thread_source）；
-// 非法/非对象值重建为最小合法 metadata，避免 flat 与 embedded identity 分裂。
+// 仅替换已经存在的身份字段并保留其他字段。缺失或无效 metadata 保持原样。
 func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	raw := strings.TrimSpace(h.Get("x-codex-turn-metadata"))
 	if raw == "" {
@@ -463,10 +469,17 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
-		metadata = make(map[string]any, len(fields))
+		return
 	}
+	modified := false
 	for k, v := range fields {
-		metadata[k] = v
+		if current, exists := metadata[k]; exists && !reflect.DeepEqual(current, v) {
+			metadata[k] = v
+			modified = true
+		}
+	}
+	if !modified {
+		return
 	}
 	rebuilt, err := json.Marshal(metadata)
 	if err != nil {
@@ -485,7 +498,7 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	captureCodexFingerprintOriginalBodySessionID(ids, reqBody["client_metadata"])
 	existing, _ := reqBody["client_metadata"].(map[string]any)
 	if existing == nil {
-		existing = make(map[string]any)
+		return applyCodexFingerprintPromptCacheKey(reqBody, ids)
 	}
 
 	modified := false
@@ -509,32 +522,41 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 
 	modified := false
 
-	if ids.installationID != "" {
-		existing["x-codex-installation-id"] = ids.installationID
-		modified = true
-	}
+	modified = setCodexMetadataFieldIfPresent(existing, "x-codex-installation-id", ids.installationID)
 
 	if ids.mode == codexFingerprintDevice {
-		rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
+		modified = rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
 			"installation_id": ids.installationID,
-		})
+		}) || modified
 		return modified
 	}
 
-	// session / full 模式
-	existing["session_id"] = ids.sessionID
-	existing["thread_id"] = ids.threadID
-	existing["turn_id"] = ids.turnID
-	existing["x-codex-window-id"] = ids.windowID
+	// session / full 模式只重写已有字段，避免给非 Codex 下游生成一整套元数据。
+	modified = setCodexMetadataFieldIfPresent(existing, "session_id", ids.sessionID) || modified
+	modified = setCodexMetadataFieldIfPresent(existing, "thread_id", ids.threadID) || modified
+	modified = setCodexMetadataFieldIfPresent(existing, "turn_id", ids.turnID) || modified
+	modified = setCodexMetadataFieldIfPresent(existing, "x-codex-window-id", ids.windowID) || modified
 
-	rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
+	modified = rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
 		"installation_id":         ids.installationID,
 		"session_id":              ids.sessionID,
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-	})
+	}) || modified
+	return modified
+}
+
+func setCodexMetadataFieldIfPresent(metadata map[string]any, key string, value any) bool {
+	if metadata == nil || value == nil {
+		return false
+	}
+	current, exists := metadata[key]
+	if !exists || reflect.DeepEqual(current, value) {
+		return false
+	}
+	metadata[key] = value
 	return true
 }
 
@@ -646,22 +668,29 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 	return next, modified, nil
 }
 
-// rewriteClientMetadataEmbeddedTurnMetadata 改写 client_metadata 中内嵌的
-// x-codex-turn-metadata JSON 字符串里的指定字段。非法/非对象值会重建，
-// 避免 flat client_metadata 与 embedded metadata 暴露两套身份。
-func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) {
+// rewriteClientMetadataEmbeddedTurnMetadata 仅改写内嵌 metadata 已有的身份字段。
+func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) bool {
 	raw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	if !ok || raw == "" {
-		return
+		return false
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
-		metadata = make(map[string]any, len(fields))
+		return false
 	}
+	modified := false
 	for k, v := range fields {
-		metadata[k] = v
+		if current, exists := metadata[k]; exists && !reflect.DeepEqual(current, v) {
+			metadata[k] = v
+			modified = true
+		}
 	}
-	if rebuilt, err := json.Marshal(metadata); err == nil {
+	if modified {
+		rebuilt, err := json.Marshal(metadata)
+		if err != nil {
+			return false
+		}
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
 	}
+	return modified
 }

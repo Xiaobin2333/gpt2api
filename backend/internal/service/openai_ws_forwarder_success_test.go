@@ -430,7 +430,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersPreservesCodexIdentity(t *test
 	require.Empty(t, headers.Get("X-Test"))
 }
 
-func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModeCanonicalizesClientSessionIdentity(t *testing.T) {
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModePreservesClientSessionIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -464,13 +464,10 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModeCanonicalizesClientS
 
 	require.NoError(t, err)
 	require.Empty(t, headers.Get("x-codex-installation-id"))
-	wantSession := canonicalCodexRequestUUID(c, "client-session")
-	wantThread := canonicalCodexRequestUUID(c, "client-thread")
-	wantWindow := wantThread + ":0"
-	require.Equal(t, wantWindow, headers.Get("x-codex-window-id"))
-	require.Equal(t, wantSession, headers.Get("session-id"))
-	require.Equal(t, wantThread, headers.Get("thread-id"))
-	require.Equal(t, wantThread, headers.Get("x-client-request-id"))
+	require.Equal(t, "client-window", headers.Get("x-codex-window-id"))
+	require.Equal(t, "client-session", headers.Get("session-id"))
+	require.Equal(t, "client-thread", headers.Get("thread-id"))
+	require.Equal(t, "client-request", headers.Get("x-client-request-id"))
 }
 
 func TestLogOpenAIWSBindResponseAccountWarn(t *testing.T) {
@@ -800,8 +797,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 	require.Equal(t, "native-wsv2", gjson.Get(requestJSON, "input.0.namespace").String(), "OAuth WSv2 应保留原生 namespace")
 	require.Equal(t, openAIWSBetaV2Value, captureDialer.lastHeaders.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", captureDialer.lastHeaders.Get("x-codex-beta-features"))
-	wantSession := canonicalCodexRequestUUID(c, "sess-oauth-1")
-	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, "sess-oauth-1", captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("conversation_id"))
 }
@@ -1025,8 +1021,7 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 	require.NotNil(t, result)
 	require.Equal(t, "resp_prompt_cache_key", result.RequestID)
 
-	wantSession := canonicalCodexRequestUUID(c, "pcache_123")
-	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, "pcache_123", captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("conversation_id"))
 	require.NotNil(t, captureConn.lastWrite)
@@ -1100,28 +1095,26 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	require.Empty(t, captureDialer.lastHeaders.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
-	require.Equal(t, wantThread, captureDialer.lastHeaders.Get("thread-id"))
-	require.Equal(t, wantThread, captureDialer.lastHeaders.Get("x-client-request-id"))
-	require.Equal(t, wantWindow, captureDialer.lastHeaders.Get("x-codex-window-id"))
+	require.Empty(t, captureDialer.lastHeaders.Get("thread-id"))
+	require.Empty(t, captureDialer.lastHeaders.Get("x-client-request-id"))
+	require.Empty(t, captureDialer.lastHeaders.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.Get(payloadJSON, "prompt_cache_key").String())
-	require.Equal(t, wantInstall, gjson.Get(payloadJSON, "client_metadata.x-codex-installation-id").String())
+	require.False(t, gjson.Get(payloadJSON, "client_metadata.x-codex-installation-id").Exists())
 	require.Equal(t, wantSession, gjson.Get(payloadJSON, "client_metadata.session_id").String())
-	require.Equal(t, wantThread, gjson.Get(payloadJSON, "client_metadata.thread_id").String())
-	require.Equal(t, wantWindow, gjson.Get(payloadJSON, "client_metadata.x-codex-window-id").String())
+	require.False(t, gjson.Get(payloadJSON, "client_metadata.thread_id").Exists())
+	require.False(t, gjson.Get(payloadJSON, "client_metadata.x-codex-window-id").Exists())
 
 	bodyTurnMetadata := gjson.Get(payloadJSON, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := captureDialer.lastHeaders.Get("x-codex-turn-metadata")
 	require.Equal(t, wantInstall, gjson.Get(bodyTurnMetadata, "installation_id").String())
 	require.Equal(t, wantSession, gjson.Get(bodyTurnMetadata, "session_id").String())
 	require.Equal(t, wantThread, gjson.Get(bodyTurnMetadata, "thread_id").String())
+	require.Equal(t, wantWindow, gjson.Get(bodyTurnMetadata, "window_id").String())
 	require.Equal(t, wantSession, gjson.Get(headerTurnMetadata, "session_id").String())
 	require.Equal(t, gjson.Get(bodyTurnMetadata, "turn_id").String(), gjson.Get(headerTurnMetadata, "turn_id").String())
-	require.NotZero(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int())
-	require.Equal(t,
-		gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int(),
-		gjson.Get(headerTurnMetadata, "turn_started_at_unix_ms").Int(),
-	)
+	require.False(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Exists())
+	require.False(t, gjson.Get(headerTurnMetadata, "turn_started_at_unix_ms").Exists())
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_ResponseDoneUsageParsed(t *testing.T) {

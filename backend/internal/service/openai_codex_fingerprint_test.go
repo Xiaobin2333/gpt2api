@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -259,6 +260,9 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	h.Set("x-codex-window-id", "user-thread:0")
 	h.Set("x-codex-turn-metadata", turnMetadata)
 	h.Set("x-client-request-id", "user-thread")
+	h.Set("session-id", "user-session")
+	h.Set("session_id", "user-session")
+	h.Set("thread-id", "user-thread")
 
 	ids := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
 	applyCodexFingerprintHeaders(h, ids)
@@ -302,6 +306,10 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	clientA.Set("session-id", "client-A")
 	idsA := resolveCodexFingerprintIDsFromRequest(account, clientA)
 	hA := http.Header{}
+	hA.Set("x-codex-installation-id", "x")
+	hA.Set("session-id", "x")
+	hA.Set("thread-id", "x")
+	hA.Set("x-codex-window-id", "x:0")
 	hA.Set("x-codex-turn-metadata", makeTurnMeta())
 	applyCodexFingerprintHeaders(hA, idsA)
 
@@ -309,6 +317,10 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	clientB.Set("session-id", "client-B")
 	idsB := resolveCodexFingerprintIDsFromRequest(account, clientB)
 	hB := http.Header{}
+	hB.Set("x-codex-installation-id", "x")
+	hB.Set("session-id", "x")
+	hB.Set("thread-id", "x")
+	hB.Set("x-codex-window-id", "x:0")
 	hB.Set("x-codex-turn-metadata", makeTurnMeta())
 	applyCodexFingerprintHeaders(hB, idsB)
 
@@ -334,6 +346,9 @@ func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	clientA.Set("session-id", "client-A")
 	idsA := resolveCodexFingerprintIDsFromRequest(account, clientA)
 	hA := http.Header{}
+	hA.Set("session-id", "x")
+	hA.Set("thread-id", "x")
+	hA.Set("x-codex-window-id", "x:0")
 	hA.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`)
 	applyCodexFingerprintHeaders(hA, idsA)
 
@@ -341,6 +356,9 @@ func TestApplyCodexFingerprintHeaders_FullMode(t *testing.T) {
 	clientB.Set("session-id", "client-B")
 	idsB := resolveCodexFingerprintIDsFromRequest(account, clientB)
 	hB := http.Header{}
+	hB.Set("session-id", "x")
+	hB.Set("thread-id", "x")
+	hB.Set("x-codex-window-id", "x:0")
 	hB.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`)
 	applyCodexFingerprintHeaders(hB, idsB)
 
@@ -400,11 +418,11 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, headerTurnID, bodyTurnID, "头和体的 turn_id 必须一致")
 	assert.Equal(t, headerTurnID, bodyEmbeddedTurnID, "头和体内嵌 turn-metadata 的 turn_id 必须一致")
 	assert.Equal(t, ids.turnID, headerTurnID, "所有 turn_id 都应来自同一份 ids")
-	assert.Equal(t, headerMeta["turn_started_at_unix_ms"], bodyMeta["turn_started_at_unix_ms"], "头和体的 timestamp 必须一致")
-	assert.Equal(t, float64(ids.turnStartedAtUnixMs), headerMeta["turn_started_at_unix_ms"])
+	assert.NotContains(t, headerMeta, "turn_started_at_unix_ms")
+	assert.NotContains(t, bodyMeta, "turn_started_at_unix_ms")
 }
 
-func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.T) {
+func TestFingerprintIDs_MalformedEmbeddedMetadataIsPreserved(t *testing.T) {
 	account := newTestOAuthAccount(2, map[string]any{codexFingerprintModeExtraKey: "session"})
 	clientHeaders := make(http.Header)
 	clientHeaders.Set("session-id", "client-session-malformed")
@@ -423,18 +441,13 @@ func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.
 	}
 	require.True(t, applyCodexFingerprintClientMetadata(reqBody, ids))
 
-	var headerMeta map[string]any
-	require.NoError(t, json.Unmarshal([]byte(h.Get("x-codex-turn-metadata")), &headerMeta))
+	require.Equal(t, "{malformed", h.Get("x-codex-turn-metadata"))
 	clientMetadata, ok := reqBody["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	bodyRaw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	require.True(t, ok)
-	var bodyMeta map[string]any
-	require.NoError(t, json.Unmarshal([]byte(bodyRaw), &bodyMeta))
-
-	for _, key := range []string{"installation_id", "session_id", "thread_id", "turn_id", "window_id", "turn_started_at_unix_ms"} {
-		assert.Equal(t, headerMeta[key], bodyMeta[key], "rebuilt metadata field %s must match", key)
-	}
+	require.Equal(t, "[malformed", bodyRaw)
+	require.Equal(t, ids.sessionID, clientMetadata["session_id"])
 }
 
 // --- applyCodexFingerprintClientMetadata ---
@@ -497,6 +510,8 @@ func TestApplyCodexFingerprintClientMetadata_SessionMode(t *testing.T) {
 		"client_metadata": map[string]any{
 			"x-codex-installation-id": "original-install",
 			"session_id":              "original-session",
+			"thread_id":               "original-thread",
+			"x-codex-window-id":       "original-thread:0",
 			"x-codex-turn-metadata":   embeddedMeta,
 		},
 	}
@@ -598,9 +613,8 @@ func rawVsMapClientMetadata(t *testing.T, body []byte, ids *codexFingerprintIDs)
 	applyCodexFingerprintClientMetadata(decoded, ids)
 	mapCM, _ := decoded["client_metadata"].(map[string]any)
 
-	rawBody, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	rawBody, _, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
-	require.True(t, changed)
 	var rawDecoded map[string]any
 	require.NoError(t, json.Unmarshal(rawBody, &rawDecoded))
 	rawCM, _ := rawDecoded["client_metadata"].(map[string]any)
@@ -683,20 +697,23 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 		name          string
 		body          []byte
 		ids           *codexFingerprintIDs
+		wantChanged   bool
 		wantExists    bool
 		wantCacheKey  any
 		wantRawString string
 	}{
 		{
-			name:       "missing key is not injected",
-			body:       []byte(`{"client_metadata":{"session_id":"body-session"}}`),
-			ids:        sessionIDs,
-			wantExists: false,
+			name:        "missing key is not injected",
+			body:        []byte(`{"client_metadata":{"session_id":"body-session"}}`),
+			ids:         sessionIDs,
+			wantChanged: true,
+			wantExists:  false,
 		},
 		{
 			name:         "empty key preserved",
 			body:         []byte(`{"prompt_cache_key":"","client_metadata":{"session_id":"body-session"}}`),
 			ids:          sessionIDs,
+			wantChanged:  true,
 			wantExists:   true,
 			wantCacheKey: "",
 		},
@@ -704,6 +721,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "whitespace-different key is an explicit override",
 			body:         []byte(`{"prompt_cache_key":" body-session ","client_metadata":{"session_id":"body-session"}}`),
 			ids:          sessionIDs,
+			wantChanged:  true,
 			wantExists:   true,
 			wantCacheKey: " body-session ",
 		},
@@ -711,6 +729,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "non-string key preserved",
 			body:         []byte(`{"prompt_cache_key":123,"client_metadata":{"session_id":"body-session"}}`),
 			ids:          sessionIDs,
+			wantChanged:  true,
 			wantExists:   true,
 			wantCacheKey: float64(123),
 		},
@@ -718,6 +737,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "missing source metadata preserves key",
 			body:         []byte(`{"prompt_cache_key":"body-session"}`),
 			ids:          sessionIDs,
+			wantChanged:  false,
 			wantExists:   true,
 			wantCacheKey: "body-session",
 		},
@@ -725,6 +745,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "non-string source session preserves key",
 			body:         []byte(`{"prompt_cache_key":"123","client_metadata":{"session_id":123}}`),
 			ids:          sessionIDs,
+			wantChanged:  true,
 			wantExists:   true,
 			wantCacheKey: "123",
 		},
@@ -732,6 +753,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "non-object source metadata preserves key",
 			body:         []byte(`{"prompt_cache_key":"body-session","client_metadata":"bad"}`),
 			ids:          sessionIDs,
+			wantChanged:  false,
 			wantExists:   true,
 			wantCacheKey: "body-session",
 		},
@@ -739,6 +761,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			name:         "device mode preserves key",
 			body:         []byte(`{"prompt_cache_key":"body-session","client_metadata":{"session_id":"body-session"}}`),
 			ids:          deviceIDs,
+			wantChanged:  false,
 			wantExists:   true,
 			wantCacheKey: "body-session",
 		},
@@ -766,8 +789,8 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 				require.JSONEq(t, tt.wantRawString, string(rawBody))
 				return
 			}
-			require.True(t, changedMap)
-			require.True(t, changedRaw)
+			require.Equal(t, tt.wantChanged, changedMap)
+			require.Equal(t, tt.wantChanged, changedRaw)
 
 			rawDecoded := map[string]any{}
 			require.NoError(t, json.Unmarshal(rawBody, &rawDecoded))
@@ -811,17 +834,16 @@ func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *test
 	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"message","role":"user","content":"hi"}],"stream":true,"prompt_cache_key":"pck-1"}`)
 	out, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.False(t, changed)
+	require.Equal(t, body, out)
 
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(out, &decoded))
 	assert.Equal(t, "gpt-5.6-sol", decoded["model"])
 	assert.Equal(t, "pck-1", decoded["prompt_cache_key"])
 	assert.Equal(t, true, decoded["stream"])
-	cm, _ := decoded["client_metadata"].(map[string]any)
-	require.NotNil(t, cm)
-	assert.Equal(t, ids.sessionID, cm["session_id"])
-	assert.Equal(t, ids.turnID, cm["turn_id"])
+	_, exists := decoded["client_metadata"]
+	assert.False(t, exists)
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_Noop(t *testing.T) {
@@ -922,11 +944,11 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	require.NoError(t, err)
 
 	assert.Equal(t, ids.sessionID, req.Header.Get("session-id"), "session 模式下出站 session-id 应为账号级收敛值")
-	assert.Equal(t, ids.threadID, req.Header.Get("thread-id"))
+	assert.Empty(t, req.Header.Get("thread-id"))
 	assert.Empty(t, req.Header.Get("session_id"))
 	assert.Empty(t, req.Header.Get("x-codex-installation-id"), "普通 Responses 的 installation ID 仅位于 client_metadata")
-	assert.Equal(t, ids.windowID, req.Header.Get("x-codex-window-id"))
-	assert.Equal(t, ids.threadID, req.Header.Get("x-client-request-id"))
+	assert.Empty(t, req.Header.Get("x-codex-window-id"))
+	assert.Empty(t, req.Header.Get("x-client-request-id"))
 	turnMetadata := req.Header.Get("x-codex-turn-metadata")
 	require.NotEmpty(t, turnMetadata)
 	assert.Contains(t, turnMetadata, ids.sessionID, "turn-metadata JSON 中的 session_id 应被收敛")
@@ -955,7 +977,39 @@ func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *te
 	assert.NotEmpty(t, req.Header.Get("session-id"))
 	assert.Empty(t, req.Header.Get("session_id"))
 	assert.NotEqual(t, resolveConvergedSessionID(testCodexFingerprintSeed), req.Header.Get("session-id"), "off 模式不得收敛 session_id")
-	assert.Equal(t, req.Header.Get("thread-id")+":0", req.Header.Get("x-codex-window-id"))
+	assert.Empty(t, req.Header.Get("thread-id"))
+	assert.Empty(t, req.Header.Get("x-codex-window-id"))
+}
+
+func TestBuildUpstreamRequestOpenAIPassthrough_MinimalBodyDoesNotSynthesizeIdentity(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := newTestOAuthAccount(2003, map[string]any{
+		"openai_oauth_passthrough": true,
+		"codex_fingerprint_mode":   "device",
+	})
+	c := newFingerprintStageTestContext(t)
+	c.Request.Header.Set("originator", "codex-tui")
+	stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsFromRequest(account, c.Request.Header))
+
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"client-cache-key","input":[],"stream":true}`)
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
+	require.NoError(t, err)
+	outboundBody, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+
+	require.JSONEq(t, string(body), string(outboundBody))
+	assert.Equal(t, "client-cache-key", req.Header.Get("session-id"))
+	for _, name := range []string{
+		"session_id",
+		"conversation_id",
+		"thread-id",
+		"x-client-request-id",
+		"x-codex-installation-id",
+		"x-codex-turn-metadata",
+		"x-codex-window-id",
+	} {
+		assert.Empty(t, req.Header.Get(name), name)
+	}
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testing.T) {
