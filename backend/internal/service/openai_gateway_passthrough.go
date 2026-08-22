@@ -490,7 +490,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
 	// 透传客户端请求头（安全白名单）。
-	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
+	allowTimeoutHeaders := account.Type != AccountTypeOAuth && s.isOpenAIPassthroughTimeoutHeadersAllowed()
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
 			lower := strings.ToLower(strings.TrimSpace(key))
@@ -533,7 +533,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
-		} else if req.Header.Get("accept") == "" {
+		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}
 		if req.Header.Get("originator") == "" {

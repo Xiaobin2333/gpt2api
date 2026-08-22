@@ -183,7 +183,8 @@ func normalizeCodexOAuthFieldName(key string) string {
 }
 
 func isBlockedCodexOAuthClientField(key string) bool {
-	switch normalizeCodexOAuthFieldName(key) {
+	normalized := normalizeCodexOAuthFieldName(key)
+	switch normalized {
 	case "base_url", "custom_base_url", "custom_base_url_enabled", "endpoint",
 		"hostname", "host", "api_key", "x_api_key", "key", "authorization",
 		"timezone", "time_zone", "tz", "country", "country_code", "countrycode",
@@ -191,11 +192,24 @@ func isBlockedCodexOAuthClientField(key string) bool {
 		"device_id", "deviceid", "client_id", "clientid", "client_info",
 		"runtime", "runtime_version", "runtimeversion", "sdk_version", "sdkversion",
 		"app_version", "appversion", "telemetry", "environment",
-		"os", "os_name", "os_version", "platform", "architecture", "arch", "machine":
+		"os", "os_name", "os_version", "platform", "architecture", "arch", "machine",
+		"cwd", "pwd", "working_directory", "current_working_directory",
+		"workspace", "workspaces", "workspace_root", "worktree", "repository", "repo",
+		"git", "git_branch", "git_commit", "git_remote", "remote_url", "branch", "commit",
+		"terminal", "terminal_name", "shell", "shell_name", "agent_name",
+		"plugin", "plugins", "skill", "skills", "mcp", "mcp_servers", "tool_namespaces_info",
+		"trace", "trace_id", "traceparent", "tracestate", "baggage":
 		return true
-	default:
-		return false
 	}
+	for _, prefix := range [...]string{
+		"cwd_", "workspace_", "worktree_", "repository_", "repo_", "git_",
+		"terminal_", "shell_", "plugin_", "skill_", "mcp_", "trace_",
+	} {
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsBlockedCodexOAuthFieldText(value string) bool {
@@ -212,12 +226,53 @@ func containsBlockedCodexOAuthFieldText(value string) bool {
 		"app.version", "app_version", "app-version", `"telemetry"`,
 		`"os"`, "os_name", "os-name", "os_version", "os-version",
 		`"platform"`, `"architecture"`, `"arch"`, `"machine"`,
+		`"cwd"`, "cwd=", `"pwd"`, "pwd=", "working_directory", "current_working_directory",
+		`"workspace"`, "workspace=", `"workspaces"`, "workspace_root", `"worktree"`,
+		`"repository"`, `"repo"`, `"git"`, "git_branch", "git_commit", "git_remote", "remote_url",
+		`"terminal"`, `"shell"`, `"agent_name"`, `"plugin"`, `"plugins"`,
+		`"skill"`, `"skills"`, `"mcp"`, "mcp_servers", "tool_namespaces_info",
+		`"trace"`, "trace_id", "traceparent", "tracestate", `"baggage"`,
 	} {
 		if strings.Contains(lower, token) {
 			return true
 		}
 	}
 	return false
+}
+
+var codexOAuthBlockedOutboundHeaders = map[string]struct{}{
+	"version":                     {},
+	"accept-language":             {},
+	"cookie":                      {},
+	"traceparent":                 {},
+	"tracestate":                  {},
+	"baggage":                     {},
+	"x-client-locale":             {},
+	"x-locale":                    {},
+	"x-stainless-timeout":         {},
+	"x-stainless-read-timeout":    {},
+	"x-stainless-connect-timeout": {},
+	"x-request-timeout":           {},
+	"request-timeout":             {},
+	"grpc-timeout":                {},
+	"x-codex-attestation":         {},
+	"x-openai-attestation":        {},
+	"x-device-attestation":        {},
+}
+
+func sanitizeCodexOAuthOutboundHeaders(headers http.Header) bool {
+	if headers == nil {
+		return false
+	}
+	changed := false
+	for name := range headers {
+		if _, ok := codexOAuthBlockedOutboundHeaders[strings.ToLower(strings.TrimSpace(name))]; !ok {
+			continue
+		}
+		delete(headers, name)
+		changed = true
+	}
+	return changed
 }
 
 func codexOAuthStringMap(value any) (map[string]any, bool) {

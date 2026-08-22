@@ -2521,6 +2521,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
 	c.Request.Header.Set("x-stainless-timeout", "120000")
+	c.Request.Header.Set("Accept", "application/json")
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+	c.Request.Header.Set("Traceparent", "00-private")
 	c.Request.Header.Set("X-Test", "keep")
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -2556,10 +2559,13 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Empty(t, upstream.lastReq.Header.Get("x-stainless-timeout"))
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.Empty(t, upstream.lastReq.Header.Get("Accept-Language"))
+	require.Empty(t, upstream.lastReq.Header.Get("Traceparent"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_FiltersTimeoutHeadersEvenWhenConfigured(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -2604,6 +2610,6 @@ func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured
 	_, err := svc.Forward(context.Background(), c, account, originalBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "120000", upstream.lastReq.Header.Get("x-stainless-timeout"))
+	require.Empty(t, upstream.lastReq.Header.Get("x-stainless-timeout"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }

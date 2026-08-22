@@ -517,11 +517,9 @@ func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	if h == nil {
 		return
 	}
-	// 即使调用方刻意移除了 originator（例如兼容桥），也不能让下游传入的
-	// 非官方 version 或 locale 头穿过最终 OAuth 出站边界。官方 Codex 默认
-	// 客户端不发送 Accept-Language。
-	h.Del("version")
-	h.Del("accept-language")
+	// 即使调用方刻意移除了 originator（例如兼容桥），本地环境与超时载体
+	// 也必须在 OAuth 最终边界统一清除。
+	sanitizeCodexOAuthOutboundHeaders(h)
 	if h.Get("originator") == "" {
 		return
 	}
