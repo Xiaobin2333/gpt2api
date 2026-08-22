@@ -54,37 +54,6 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 	})
 }
 
-func TestClearCodexOAuthRequestIdentityHeaders(t *testing.T) {
-	headers := make(http.Header)
-	for _, name := range []string{
-		"session-id",
-		"session_id",
-		"conversation_id",
-		"thread-id",
-		"x-client-request-id",
-		"x-codex-window-id",
-		"x-codex-installation-id",
-	} {
-		headers.Set(name, "client-value")
-	}
-	headers.Set("x-codex-turn-state", "state")
-
-	clearCodexOAuthRequestIdentityHeaders(headers)
-
-	for _, name := range []string{
-		"session-id",
-		"session_id",
-		"conversation_id",
-		"thread-id",
-		"x-client-request-id",
-		"x-codex-window-id",
-		"x-codex-installation-id",
-	} {
-		require.Empty(t, headers.Get(name), name)
-	}
-	require.Equal(t, "state", headers.Get("x-codex-turn-state"))
-}
-
 func TestResolveCodexOAuthRequestIdentityPreservesExistingValues(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

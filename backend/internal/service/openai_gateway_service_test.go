@@ -3059,7 +3059,7 @@ func TestOpenAIBuildUpstreamRequestOAuthDoesNotForwardLegacyResponsesBeta(t *tes
 	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
 }
 
-func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {
+func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeDoesNotSynthesizeSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3077,7 +3077,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "anthropic-metadata-session-1", false)
 	require.NoError(t, err)
-	require.NotEmpty(t, req.Header.Get("session-id"))
+	require.Empty(t, req.Header.Get("session-id"))
 	require.Empty(t, req.Header.Get("session_id"))
 	require.Empty(t, req.Header.Get("conversation_id"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))

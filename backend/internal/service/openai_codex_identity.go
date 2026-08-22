@@ -256,23 +256,6 @@ func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthReq
 	h.Del("x-codex-installation-id")
 }
 
-func clearCodexOAuthRequestIdentityHeaders(h http.Header) {
-	if h == nil {
-		return
-	}
-	for _, name := range [...]string{
-		"session-id",
-		"session_id",
-		"conversation_id",
-		"thread-id",
-		"x-client-request-id",
-		"x-codex-window-id",
-		"x-codex-installation-id",
-	} {
-		h.Del(name)
-	}
-}
-
 func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body []byte, promptCacheKey string) ([]byte, error) {
 	if account == nil || !account.IsOpenAIOAuth() || len(body) == 0 || !gjson.ValidBytes(body) {
 		return body, nil
