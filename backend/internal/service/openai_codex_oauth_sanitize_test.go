@@ -12,9 +12,12 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.4",
 		"base_url":"https://relay.example",
+		"metadata":{"client":"Pi","unique_marker":"private"},
+		"credential_extras":{"source":"private"},
 		"client_metadata":{
 			"session_id":"session-keep",
 			"nested":{"thread_id":"thread-keep","api_key":"sk-leak","device_id":"device-leak","client_id":"client-leak"},
+			"unknown_client_marker":"private",
 			"authorization":"Bearer leak",
 			"timezone":"Asia/Shanghai",
 			"runtime":"node",
@@ -31,7 +34,7 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 			"mcp_servers":{"private":{"url":"http://127.0.0.1:9000"}},
 			"trace_id":"local-trace",
 			"telemetry":{"app_version":"9.9.9"},
-			"x-codex-turn-metadata":"{\"session_id\":\"session-keep\",\"request_kind\":\"turn\",\"sandbox_mode\":\"workspace-write\",\"agent_name\":\"/home/user/project\",\"tool_namespaces_info\":{\"private\":{}},\"base_url\":\"https://relay.example\",\"region\":\"CN\",\"device_id\":\"device-leak\",\"app.version\":\"9.9.9\"}"
+			"x-codex-turn-metadata":"{\"session_id\":\"session-keep\",\"request_kind\":\"turn\",\"sandbox_mode\":\"workspace-write\",\"compaction\":{\"trigger\":\"auto\",\"strategy\":\"memento\",\"private\":\"drop\"},\"future_unique\":\"drop\",\"agent_name\":\"/home/user/project\",\"tool_namespaces_info\":{\"private\":{}},\"base_url\":\"https://relay.example\",\"region\":\"CN\",\"device_id\":\"device-leak\",\"app.version\":\"9.9.9\"}"
 		}
 	}`)
 
@@ -39,9 +42,12 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 	require.True(t, changed)
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(got, "model").String())
 	require.Equal(t, "session-keep", gjson.GetBytes(got, "client_metadata.session_id").String())
-	require.Equal(t, "thread-keep", gjson.GetBytes(got, "client_metadata.nested.thread_id").String())
 	for _, path := range []string{
 		"base_url",
+		"metadata",
+		"credential_extras",
+		"client_metadata.nested",
+		"client_metadata.unknown_client_marker",
 		"client_metadata.nested.api_key",
 		"client_metadata.nested.device_id",
 		"client_metadata.nested.client_id",
@@ -68,6 +74,10 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 	require.Equal(t, "session-keep", gjson.Get(turnMetadata, "session_id").String())
 	require.Equal(t, "turn", gjson.Get(turnMetadata, "request_kind").String())
 	require.Equal(t, "workspace-write", gjson.Get(turnMetadata, "sandbox_mode").String())
+	require.Equal(t, "auto", gjson.Get(turnMetadata, "compaction.trigger").String())
+	require.Equal(t, "memento", gjson.Get(turnMetadata, "compaction.strategy").String())
+	require.False(t, gjson.Get(turnMetadata, "compaction.private").Exists())
+	require.False(t, gjson.Get(turnMetadata, "future_unique").Exists())
 	require.False(t, gjson.Get(turnMetadata, "agent_name").Exists())
 	require.False(t, gjson.Get(turnMetadata, "tool_namespaces_info").Exists())
 	require.False(t, gjson.Get(turnMetadata, "base_url").Exists())
@@ -86,6 +96,68 @@ func TestSanitizeCodexOAuthJSONBodyPreservesInvalidOrUnchangedBody(t *testing.T)
 	got, changed = sanitizeCodexOAuthJSONBody(clean)
 	require.False(t, changed)
 	require.Equal(t, clean, got)
+}
+
+func TestSanitizeCodexOAuthJSONBodyDropsInvalidClientMetadataShape(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","client_metadata":"Pi/private-marker","Client_Metadata":{"session_id":"case-marker"},"x-codex-turn-metadata":"{\"session_id\":\"top-level-marker\"}"}`)
+	got, changed := sanitizeCodexOAuthJSONBody(body)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(got, "client_metadata").Exists())
+	require.False(t, gjson.GetBytes(got, "Client_Metadata").Exists())
+	require.False(t, gjson.GetBytes(got, "x-codex-turn-metadata").Exists())
+}
+
+func TestSanitizeCodexOAuthJSONBodyClientFixtures(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantChanged bool
+	}{
+		{
+			name:        "official_codex",
+			body:        `{"model":"gpt-5.4","client_metadata":{"x-codex-installation-id":"install","session_id":"session","thread_id":"thread","turn_id":"turn","x-codex-window-id":"thread:0","x-codex-turn-state":"state","x-codex-ws-stream-request-start-ms":"1787389200123","ws_request_header_x_openai_internal_codex_responses_lite":"true","x-codex-turn-metadata":"{\"session_id\":\"session\",\"thread_id\":\"thread\",\"turn_id\":\"turn\",\"request_kind\":\"turn\"}"}}`,
+			wantChanged: false,
+		},
+		{
+			name:        "pi",
+			body:        `{"model":"gpt-5.4","client_metadata":{"session_id":"session","client":"pi","runtime":"node","cwd":"/private/pi"}}`,
+			wantChanged: true,
+		},
+		{
+			name:        "opencode",
+			body:        `{"model":"gpt-5.4","metadata":{"client":"opencode"},"client_metadata":{"session_id":"session","opencode_version":"private"}}`,
+			wantChanged: true,
+		},
+		{
+			name:        "cliproxyapi_minimal",
+			body:        `{"model":"gpt-5.4","stream":true,"input":"hello"}`,
+			wantChanged: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := sanitizeCodexOAuthJSONBody([]byte(tt.body))
+			require.Equal(t, tt.wantChanged, changed)
+			require.Equal(t, "gpt-5.4", gjson.GetBytes(got, "model").String())
+			require.False(t, gjson.GetBytes(got, "metadata").Exists())
+			require.False(t, gjson.GetBytes(got, "client_metadata.client").Exists())
+			require.False(t, gjson.GetBytes(got, "client_metadata.runtime").Exists())
+			require.False(t, gjson.GetBytes(got, "client_metadata.cwd").Exists())
+			require.False(t, gjson.GetBytes(got, "client_metadata.opencode_version").Exists())
+		})
+	}
+}
+
+func TestSanitizeCodexOAuthJSONBodyValidatesOfficialWSMetadataValues(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","client_metadata":{"session_id":"session","x-codex-turn-state":"state","x-codex-ws-stream-request-start-ms":"not-a-timestamp","ws_request_header_x_openai_internal_codex_responses_lite":"yes"}}`)
+
+	got, changed := sanitizeCodexOAuthJSONBody(body)
+	require.True(t, changed)
+	require.Equal(t, "session", gjson.GetBytes(got, "client_metadata.session_id").String())
+	require.Equal(t, "state", gjson.GetBytes(got, "client_metadata.x-codex-turn-state").String())
+	require.False(t, gjson.GetBytes(got, "client_metadata.x-codex-ws-stream-request-start-ms").Exists())
+	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").Exists())
 }
 
 func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
@@ -117,18 +189,19 @@ func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
 func TestSanitizeCodexOAuthTurnMetadataDropsOpaqueSensitiveValue(t *testing.T) {
 	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque timezone=Asia/Shanghai`))
 	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque workspace=/home/user/project`))
-	require.Equal(t, "opaque sandbox=workspace-write", sanitizeCodexOAuthTurnMetadataString(`opaque sandbox=workspace-write`))
+	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque sandbox=workspace-write`))
 }
 
 func TestSanitizeCodexOAuthTurnMetadataHeader(t *testing.T) {
 	headers := http.Header{}
-	headers.Set(openAIWSTurnMetadataHeader, `{"session_id":"session-keep","timezone":"Asia/Shanghai","base_url":"https://relay.example"}`)
+	headers.Set(openAIWSTurnMetadataHeader, `{"session_id":"session-keep","timezone":"Asia/Shanghai","base_url":"https://relay.example","future_unique":"private"}`)
 
 	require.True(t, sanitizeCodexOAuthTurnMetadataHeader(headers))
 	metadata := headers.Get(openAIWSTurnMetadataHeader)
 	require.Equal(t, "session-keep", gjson.Get(metadata, "session_id").String())
 	require.False(t, gjson.Get(metadata, "timezone").Exists())
 	require.False(t, gjson.Get(metadata, "base_url").Exists())
+	require.False(t, gjson.Get(metadata, "future_unique").Exists())
 }
 
 func TestSanitizeCodexOAuthOutboundHeaders(t *testing.T) {

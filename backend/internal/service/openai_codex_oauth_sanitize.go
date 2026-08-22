@@ -45,18 +45,93 @@ func sanitizeCodexOAuthRequestMap(payload map[string]any) bool {
 		return false
 	}
 	changed := sanitizeCodexOAuthBlockedKeys(payload)
-	if sanitizeCodexOAuthTurnMetadataFields(payload) {
-		changed = true
-	}
-	for _, key := range [...]string{"metadata", "client_metadata", "credential_extras", "credentials"} {
-		if child, ok := codexOAuthStringMap(payload[key]); ok {
-			if sanitizeCodexOAuthMetadataMap(child) {
+	for key, value := range payload {
+		switch normalizeCodexOAuthFieldName(key) {
+		case "metadata", "credential_extras", "credentials", "x_codex_turn_metadata":
+			delete(payload, key)
+			changed = true
+		case "client_metadata":
+			if key != "client_metadata" {
+				delete(payload, key)
+				changed = true
+				continue
+			}
+			child, ok := codexOAuthStringMap(value)
+			if !ok {
+				delete(payload, key)
+				changed = true
+				continue
+			}
+			childChanged := sanitizeCodexOAuthClientMetadataMap(child)
+			if len(child) == 0 {
+				delete(payload, key)
+				changed = true
+			} else if childChanged {
 				payload[key] = child
 				changed = true
 			}
 		}
 	}
 	return changed
+}
+
+var codexOAuthAllowedClientMetadataFields = map[string]struct{}{
+	"x-codex-installation-id":            {},
+	"session_id":                         {},
+	"thread_id":                          {},
+	"turn_id":                            {},
+	"x-codex-window-id":                  {},
+	"x-codex-turn-metadata":              {},
+	"x-codex-turn-state":                 {},
+	"x-codex-parent-thread-id":           {},
+	"x-openai-subagent":                  {},
+	"parent_turn_id":                     {},
+	"root_turn_id":                       {},
+	"x-codex-ws-stream-request-start-ms": {},
+	"ws_request_header_x_openai_internal_codex_responses_lite": {},
+}
+
+func sanitizeCodexOAuthClientMetadataMap(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	changed := sanitizeCodexOAuthMetadataMap(metadata)
+	for key, value := range metadata {
+		canonical := strings.ToLower(key)
+		if key != canonical || strings.TrimSpace(key) != key {
+			delete(metadata, key)
+			changed = true
+			continue
+		}
+		if _, ok := codexOAuthAllowedClientMetadataFields[canonical]; !ok {
+			delete(metadata, key)
+			changed = true
+			continue
+		}
+		text, ok := value.(string)
+		if !ok || strings.TrimSpace(text) == "" || !validCodexOAuthClientMetadataValue(canonical, text) {
+			delete(metadata, key)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func validCodexOAuthClientMetadataValue(key, value string) bool {
+	switch key {
+	case "ws_request_header_x_openai_internal_codex_responses_lite":
+		return value == "true"
+	case "x-codex-ws-stream-request-start-ms":
+		if len(value) < 10 || len(value) > 16 {
+			return false
+		}
+		for i := range value {
+			if value[i] < '0' || value[i] > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func sanitizeCodexOAuthMetadataMap(metadata map[string]any) bool {
@@ -120,6 +195,8 @@ func sanitizeCodexOAuthTurnMetadataFields(payload map[string]any) bool {
 		}
 		raw, ok := value.(string)
 		if !ok {
+			delete(payload, key)
+			changed = true
 			continue
 		}
 		next := sanitizeCodexOAuthTurnMetadataString(raw)
@@ -143,12 +220,13 @@ func sanitizeCodexOAuthTurnMetadataString(raw string) string {
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil || payload == nil {
-		if containsBlockedCodexOAuthFieldText(trimmed) {
-			return ""
-		}
-		return trimmed
+		return ""
 	}
-	if !sanitizeCodexOAuthMetadataMap(payload) {
+	changed := sanitizeCodexOAuthTurnMetadataMap(payload)
+	if len(payload) == 0 {
+		return ""
+	}
+	if !changed {
 		return trimmed
 	}
 	next, err := json.Marshal(payload)
@@ -156,6 +234,95 @@ func sanitizeCodexOAuthTurnMetadataString(raw string) string {
 		return ""
 	}
 	return string(next)
+}
+
+var codexOAuthAllowedTurnMetadataFields = map[string]struct{}{
+	"installation_id":                {},
+	"session_id":                     {},
+	"thread_id":                      {},
+	"turn_id":                        {},
+	"window_id":                      {},
+	"request_kind":                   {},
+	"forked_from_thread_id":          {},
+	"parent_thread_id":               {},
+	"parent_turn_id":                 {},
+	"root_turn_id":                   {},
+	"subagent_kind":                  {},
+	"thread_source":                  {},
+	"sandbox":                        {},
+	"sandbox_mode":                   {},
+	"auto_review_enabled":            {},
+	"node_repl_auto_review_required": {},
+	"node_repl_disabled":             {},
+	"turn_started_at_unix_ms":        {},
+	"compaction":                     {},
+}
+
+func sanitizeCodexOAuthTurnMetadataMap(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	changed := sanitizeCodexOAuthMetadataMap(metadata)
+	for key, value := range metadata {
+		canonical := strings.ToLower(key)
+		if key != canonical || strings.TrimSpace(key) != key {
+			delete(metadata, key)
+			changed = true
+			continue
+		}
+		_, allowed := codexOAuthAllowedTurnMetadataFields[canonical]
+		valid, valueChanged := sanitizeCodexOAuthTurnMetadataValue(canonical, value)
+		if !allowed || !valid {
+			delete(metadata, key)
+			changed = true
+			continue
+		}
+		if valueChanged {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func sanitizeCodexOAuthTurnMetadataValue(key string, value any) (valid bool, changed bool) {
+	switch key {
+	case "auto_review_enabled", "node_repl_auto_review_required", "node_repl_disabled":
+		_, ok := value.(bool)
+		return ok, false
+	case "turn_started_at_unix_ms":
+		switch value.(type) {
+		case json.Number, float64:
+			return true, false
+		default:
+			return false, false
+		}
+	case "compaction":
+		compaction, ok := codexOAuthStringMap(value)
+		if !ok {
+			return false, false
+		}
+		for field, item := range compaction {
+			if field != strings.ToLower(field) || strings.TrimSpace(field) != field {
+				delete(compaction, field)
+				changed = true
+				continue
+			}
+			switch field {
+			case "trigger", "reason", "implementation", "phase", "strategy":
+				if text, ok := item.(string); !ok || strings.TrimSpace(text) == "" {
+					delete(compaction, field)
+					changed = true
+				}
+			default:
+				delete(compaction, field)
+				changed = true
+			}
+		}
+		return len(compaction) > 0, changed
+	default:
+		text, ok := value.(string)
+		return ok && strings.TrimSpace(text) != "", false
+	}
 }
 
 func sanitizeCodexOAuthTurnMetadataHeader(headers http.Header) bool {
@@ -206,34 +373,6 @@ func isBlockedCodexOAuthClientField(key string) bool {
 		"terminal_", "shell_", "plugin_", "skill_", "mcp_", "trace_",
 	} {
 		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsBlockedCodexOAuthFieldText(value string) bool {
-	lower := strings.ToLower(value)
-	for _, token := range [...]string{
-		"base_url", "custom_base_url", "endpoint", "hostname",
-		"api_key", "x-api-key", "authorization",
-		"time_zone", "timezone", `"tz"`,
-		"country_code", "countrycode", `"country"`,
-		"region_code", "regioncode", `"region"`,
-		`"locale"`, `"language"`, "accept_language", "accept-language",
-		"device_id", "device-id", "client_id", "client-id", "client_info", "client-info",
-		"runtime_version", "runtime-version", "sdk_version", "sdk-version",
-		"app.version", "app_version", "app-version", `"telemetry"`,
-		`"os"`, "os_name", "os-name", "os_version", "os-version",
-		`"platform"`, `"architecture"`, `"arch"`, `"machine"`,
-		`"cwd"`, "cwd=", `"pwd"`, "pwd=", "working_directory", "current_working_directory",
-		`"workspace"`, "workspace=", `"workspaces"`, "workspace_root", `"worktree"`,
-		`"repository"`, `"repo"`, `"git"`, "git_branch", "git_commit", "git_remote", "remote_url",
-		`"terminal"`, `"shell"`, `"agent_name"`, `"plugin"`, `"plugins"`,
-		`"skill"`, `"skills"`, `"mcp"`, "mcp_servers", "tool_namespaces_info",
-		`"trace"`, "trace_id", "traceparent", "tracestate", `"baggage"`,
-	} {
-		if strings.Contains(lower, token) {
 			return true
 		}
 	}
