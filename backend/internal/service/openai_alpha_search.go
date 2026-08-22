@@ -261,6 +261,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	account.ApplyHeaderOverrides(req.Header)
 	stripOpenAILegacyResponsesBeta(req.Header)
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
+	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	sanitizeCodexOAuthOutboundHeaders(req.Header)
 	return req, nil
 }

@@ -159,6 +159,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Equal(t, `{"turn_id":"turn-1"}`, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
 	require.Equal(t, openai.CodexDefaultOriginator, upstream.lastReq.Header.Get("Originator"))
 	require.Equal(t, "remote_compaction_v2", upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, "model=gpt-5.6-sol", upstream.lastReq.Header.Get("X-Codex-Routing-Hint"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Turn-State"))
 	require.Empty(t, upstream.lastReq.Header.Get(responsesLiteHeaderKey))
 	require.Empty(t, upstream.lastReq.Header.Get("Accept-Language"))
