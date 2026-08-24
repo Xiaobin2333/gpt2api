@@ -379,9 +379,9 @@ func (s *SettingService) InvalidateOpenAICodexClientVersionCache() {
 // GetOpenAICodexCanonicalUserAgent 返回出站规范 Codex User-Agent。
 // 未填面板 UA 时按当前生效的客户端版本号拼出标准 Codex TUI UA。
 //
-// 面板 UA 只贡献客户端名与 OS / 架构 / 终端指纹，版本段一律用生效版本重建：该输入框是
-// 唯一能改 UA 后缀的地方，但它填写于某个历史版本，逐字沿用会把出站身份永久钉死在陈旧
-// 版本上并绕过自动同步——而陈旧身份正是上游优先降载的那一侧。
+// 面板 UA 只贡献 OS / 架构 / 终端指纹，客户端身份与版本段一律按真实 Codex TUI
+// 重建：该输入框是唯一能改环境指纹的地方，但不能把共享 OAuth 的出站产品身份切换成
+// VSCode/Desktop，也不能用历史版本绕过自动同步。
 // 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
 func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) string {
 	if s == nil {
@@ -392,12 +392,10 @@ func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) s
 	if ua == "" {
 		return buildCodexCLIUserAgent(version)
 	}
-	if rebuilt := openai.SetCodexUserAgentVersion(ua, version); rebuilt != "" {
+	if rebuilt, ok := buildCodexTUIUserAgentFromFingerprint(ua, version); ok {
 		return rebuilt
 	}
-	// 非 `{client}/{version}` 形态：交给 PairCodexClientIdentity 判定，
-	// 推导不出官方身份时由收口整体回退规范身份。
-	return ua
+	return buildCodexCLIUserAgent(version)
 }
 
 var legacyClaudeCodeCodexWhitelistEntry = openai.AllowedClientEntry{

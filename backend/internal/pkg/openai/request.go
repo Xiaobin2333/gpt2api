@@ -247,9 +247,9 @@ func canonicalizeCodexOriginator(name string) string {
 // CodexCLIOriginator 是 codex-rs 客户端的历史默认 originator，保留用于兼容识别。
 const CodexCLIOriginator = "codex_cli_rs"
 
-// CodexDefaultOriginator is the process-wide default used by the official CLI.
-// The TUI remains identifiable as codex-tui in the User-Agent client suffix.
-const CodexDefaultOriginator = CodexCLIOriginator
+// CodexDefaultOriginator is the process-wide identity selected by the official
+// interactive TUI when it initializes the embedded app server.
+const CodexDefaultOriginator = "codex-tui"
 
 // CodexUserAgentVersion 提取 Codex UA 的完整版本段，即 `{client}/{version} (...` 中的 version。
 // 与 ParseCodexEngineVersion 的区别：后者只取三段数字用于引擎版本比较（会丢掉 -alpha.4

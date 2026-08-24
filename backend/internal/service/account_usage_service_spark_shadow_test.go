@@ -132,7 +132,7 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 	// Assertion A-1: upstream received the PARENT's chatgpt-account-id.
 	require.Equal(t, "org-spark-parent", capturedAccountID,
 		"QueryUsage must use parent's chatgpt-account-id for spark shadow accounts")
-	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Debian 13.0.0; aarch64) xterm-256color", capturedUserAgent,
+	require.Equal(t, "codex-tui/"+codexCLIVersion+" (Debian 13.0.0; aarch64) xterm-256color (codex-tui; "+codexCLIVersion+")", capturedUserAgent,
 		"QueryUsage must use parent's normalized Codex User-Agent for spark shadow accounts")
 
 	// Assertion A-2: shadow Extra was persisted with codex_5h_used_percent.

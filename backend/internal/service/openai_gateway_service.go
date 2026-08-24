@@ -38,8 +38,8 @@ const (
 	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
 	// 该后缀是 UA 形态的唯一定义处，buildCodexCLIUserAgent 按运行时版本号复用它。
 	codexCLIUserAgentSuffix = " (Debian 13.0.0; x86_64) xterm-256color"
-	// The official TUI runs under the codex_cli_rs process originator while the
-	// app-server client suffix identifies the frontend as codex-tui.
+	// The official TUI initializes the embedded app server with this name. That
+	// value becomes both the process originator and the app-server UA suffix.
 	codexCLIClientName = "codex-tui"
 	// codexCLIUserAgent 是编译期兜底 UA；运行时优先使用由后台版本号拼出的规范 UA。
 	// 版本段必须来自 codexCLIVersion，避免 UA 内部两个版本位置彼此漂移。

@@ -137,7 +137,7 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Empty(t, upstream.requests[0].Header.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", upstream.requests[0].Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "model=gpt-5.4", upstream.requests[0].Header.Get("X-Codex-Routing-Hint"))
-	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", upstream.requests[0].Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; "+codexCLIVersion+")", upstream.requests[0].Header.Get("User-Agent"))
 	probeHeaders := make(http.Header)
 	probeHeaders.Set("session-id", compactProbeSessionID(account.ID))
 	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, probeHeaders)

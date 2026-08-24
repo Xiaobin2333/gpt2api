@@ -51,7 +51,7 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "model=gpt-5.4-mini", upstream.lastReq.Header.Get("X-Codex-Routing-Hint"))
-	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; "+codexCLIVersion+")", upstream.lastReq.Header.Get("User-Agent"))
 	probeHeaders := make(http.Header)
 	probeHeaders.Set("session-id", compactProbeSessionID(account.ID))
 	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, probeHeaders)

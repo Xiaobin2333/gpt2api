@@ -113,9 +113,9 @@ func TestCodexOAuth01491SynthesizesOfficialResponsesIdentity(t *testing.T) {
 }
 
 func TestCodexCLI01491CanonicalIdentity(t *testing.T) {
-	require.Equal(t, "codex_cli_rs", openai.CodexDefaultOriginator)
+	require.Equal(t, "codex-tui", openai.CodexDefaultOriginator)
 	require.Equal(t,
-		"codex_cli_rs/0.149.1 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.149.1)",
+		"codex-tui/0.149.1 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.149.1)",
 		codexCLIUserAgent,
 	)
 }
@@ -425,10 +425,10 @@ func TestEnforceCodexIdentityHeadersStripsLocaleWithoutOriginator(t *testing.T) 
 	require.Empty(t, h.Get("Version"))
 }
 
-// 账号级自定义 UA 是管理员的显式配置，仍然生效；但它只贡献客户端名与 OS / 架构 / 终端指纹，
-// originator 与版本段一律由规范身份重建，不允许出现自相矛盾或陈旧的身份。
+// 账号级自定义 UA 是管理员的显式配置，仍然生效；但它只贡献 OS / 架构 / 终端指纹，
+// originator、客户端名与版本段一律由规范身份重建，不允许出现自相矛盾或陈旧的身份。
 func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
-	t.Run("官方形态覆写 UA 保留指纹但重建版本段", func(t *testing.T) {
+	t.Run("官方形态覆写 UA 只保留环境指纹", func(t *testing.T) {
 		h := make(http.Header)
 		h.Set("originator", "codex-tui")
 		h.Set("user-agent", "luna/1.0.0")
@@ -436,8 +436,8 @@ func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
 
 		enforceCodexIdentityHeadersWithUA(h, "codex_vscode/0.150.0 (Ubuntu 22.4.0; x86_64) vscode")
 
-		require.Equal(t, "codex_vscode", h.Get("originator"))
-		require.Equal(t, "codex_vscode/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) vscode", h.Get("user-agent"))
+		require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
+		require.Equal(t, "codex-tui/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) vscode (codex-tui; "+codexCLIVersion+")", h.Get("user-agent"))
 		require.Empty(t, h.Get("version"))
 	})
 
@@ -461,8 +461,8 @@ func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
 
 		enforceCodexIdentityHeadersWithUA(h, "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color")
 
-		require.Equal(t, "codex_cli_rs", h.Get("originator"))
-		require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", h.Get("user-agent"))
+		require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
+		require.Equal(t, "codex-tui/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; "+codexCLIVersion+")", h.Get("user-agent"))
 		require.Empty(t, h.Get("version"))
 		require.NotContains(t, h.Get("user-agent"), "0.125.0")
 	})
@@ -479,8 +479,8 @@ func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
 
 		enforceCodexIdentityHeadersWithUA(h, "codex-tui/0.125.0 (Mac OS X 14.0; arm64) iTerm")
 
-		require.Equal(t, "codex-tui", h.Get("originator"))
-		require.Equal(t, "codex-tui/0.200.1 (Mac OS X 14.0; arm64) iTerm", h.Get("user-agent"))
+		require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
+		require.Equal(t, "codex-tui/0.200.1 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.200.1)", h.Get("user-agent"))
 		require.Empty(t, h.Get("version"))
 	})
 }
@@ -500,8 +500,8 @@ func TestEnforceCodexIdentityHeadersFollowsCanonicalResolver(t *testing.T) {
 
 	enforceCodexIdentityHeaders(h)
 
-	require.Equal(t, "codex_cli_rs", h.Get("originator"))
-	require.Equal(t, "codex_cli_rs/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color", h.Get("user-agent"))
+	require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
+	require.Equal(t, "codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.200.1)", h.Get("user-agent"))
 	require.Empty(t, h.Get("version"))
 }
 
@@ -636,13 +636,13 @@ func TestCodexCanonicalUserAgentFollowsResolver(t *testing.T) {
 	})
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
-	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix+" (codex_cli_rs; 0.200.1)", CodexCanonicalUserAgent())
+	require.Equal(t, "codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)", CodexCanonicalUserAgent())
 	require.Equal(t, "0.200.1", CodexCanonicalClientVersion())
 
 	h := make(http.Header)
 	ApplyCodexCanonicalAuthIdentity(h)
-	require.Equal(t, "codex_cli_rs", h.Get("originator"))
-	require.Equal(t, "codex_cli_rs/0.200.1"+codexCLIUserAgentSuffix+" (codex_cli_rs; 0.200.1)", h.Get("user-agent"))
+	require.Equal(t, openai.CodexDefaultOriginator, h.Get("originator"))
+	require.Equal(t, "codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)", h.Get("user-agent"))
 	// 凭据面不发 version 头（真实客户端在 auth.openai.com 只带 originator + UA）。
 	require.Empty(t, h.Get("version"))
 }

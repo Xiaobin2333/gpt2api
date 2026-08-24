@@ -31,6 +31,10 @@ const codexClientVersionMaxLen = 64
 // codexClientVersionPattern 允许 0.146.0 与 0.147.0-alpha.4 两类官方形态。
 var codexClientVersionPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+){1,3}(-[0-9A-Za-z.]+)?$`)
 
+// codexCLIUserAgentEnvironmentPattern matches the environment segment emitted
+// by codex-rs: `(<OS> <version>; <arch>) <terminal-token>`.
+var codexCLIUserAgentEnvironmentPattern = regexp.MustCompile(`^\([^()\r\n;]+;\s*[^()\s;]+\)\s+\S+$`)
+
 // NormalizeCodexClientVersion 校验并归一化 Codex 客户端版本号，非法值返回空串。
 // 该值会被拼进出站 User-Agent，并用于 /models 的 client_version 查询参数，必须拒绝任意字节，避免管理员误填或
 // 自动同步拿到异常值时把不可控内容透给上游。
@@ -482,31 +486,84 @@ type codexOutboundIdentity struct {
 }
 
 // resolveCodexOutboundIdentity 由候选 User-Agent 推导自洽的出站身份。
-// candidateUA 为空时使用规范 User-Agent；推导不出官方身份时整体回退为规范 TUI 身份。
+// candidateUA 为空时使用规范 User-Agent；推导不出官方环境指纹时整体回退为规范 TUI 身份。
 //
-// 候选 UA（面板 / 账号级的管理员显式配置）只贡献客户端名与 OS / 架构 / 终端指纹，
-// 其自带的版本段一律用当前生效版本重建：一条填写于某个历史版本的 UA 否则会把出站身份
-// 永久钉死在陈旧版本上，绕过版本自动同步，落回上游优先降载的那一侧。
+// 候选 UA（面板 / 账号级的管理员显式配置）只贡献 OS / 架构 / 终端指纹；进程
+// originator、UA 首段、app-server 客户端名与两个版本声明都按真实 Codex TUI 固定重建。
+// 一条填写于某个历史版本的 UA 因此既不能把身份切换成 VSCode/Desktop，也不能绕过
+// 版本自动同步、把出站身份永久钉死在陈旧版本上。
 // 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
 func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
-	canonical := codexCanonicalUserAgent()
-	ua := strings.TrimSpace(candidateUA)
-	if ua == "" {
-		ua = canonical
-	}
-	originator, pairedUA, ok := openai.PairCodexClientIdentity(ua)
+	canonicalCandidate := codexCanonicalUserAgent()
+	version := codexClientVersionFromUA(canonicalCandidate)
+	canonical, ok := buildCodexTUIUserAgentFromFingerprint(canonicalCandidate, version)
 	if !ok {
-		if originator, pairedUA, ok = openai.PairCodexClientIdentity(canonical); !ok {
-			originator, pairedUA = openai.CodexDefaultOriginator, codexCLIUserAgent
+		canonical = buildCodexCLIUserAgent(version)
+	}
+
+	userAgent := canonical
+	if candidate := strings.TrimSpace(candidateUA); candidate != "" {
+		if rebuilt, valid := buildCodexTUIUserAgentFromFingerprint(candidate, version); valid {
+			userAgent = rebuilt
 		}
 	}
-	// 生效版本只有一个来源：规范身份（面板版本号 → 自动同步值 → 内置常量，见
-	// SettingService.GetOpenAICodexClientVersion）。UA 版本段由此单一来源派生。
-	version := codexClientVersionFromUA(canonical)
-	if rebuilt := openai.SetCodexUserAgentVersion(pairedUA, version); rebuilt != "" {
-		pairedUA = rebuilt
+	return codexOutboundIdentity{
+		userAgent:  userAgent,
+		originator: openai.CodexDefaultOriginator,
+		version:    version,
 	}
-	return codexOutboundIdentity{userAgent: pairedUA, originator: originator, version: version}
+}
+
+// buildCodexTUIUserAgentFromFingerprint keeps only the environment portion of
+// an official Codex-family UA. The outbound product identity is always the
+// 0.149.1 Codex TUI shape observed in codex-rs default_client + app-server.
+func buildCodexTUIUserAgentFromFingerprint(candidateUA, version string) (string, bool) {
+	version = NormalizeCodexClientVersion(version)
+	if version == "" {
+		return "", false
+	}
+	environment, ok := codexCLIUserAgentEnvironment(candidateUA)
+	if !ok {
+		return "", false
+	}
+	return openai.CodexDefaultOriginator + "/" + version + " " + environment +
+		" (" + codexCLIClientName + "; " + version + ")", true
+}
+
+func codexCLIUserAgentEnvironment(candidateUA string) (string, bool) {
+	_, pairedUA, ok := openai.PairCodexClientIdentity(candidateUA)
+	if !ok {
+		return "", false
+	}
+	slash := strings.IndexByte(pairedUA, '/')
+	if slash <= 0 {
+		return "", false
+	}
+	rest := pairedUA[slash+1:]
+	space := strings.IndexByte(rest, ' ')
+	if space < 0 {
+		return "", false
+	}
+	environment := strings.TrimSpace(rest[space+1:])
+	if trailerStart := strings.LastIndex(environment, " ("); trailerStart >= 0 && strings.HasSuffix(environment, ")") {
+		trailer := environment[trailerStart+2 : len(environment)-1]
+		name := trailer
+		if semicolon := strings.IndexByte(name, ';'); semicolon >= 0 {
+			name = name[:semicolon]
+		}
+		if openai.IsCodexOfficialClientOriginator(strings.TrimSpace(name)) {
+			environment = strings.TrimSpace(environment[:trailerStart])
+		}
+	}
+	for i := 0; i < len(environment); i++ {
+		if environment[i] < 0x20 || environment[i] > 0x7e {
+			return "", false
+		}
+	}
+	if !codexCLIUserAgentEnvironmentPattern.MatchString(environment) {
+		return "", false
+	}
+	return environment, true
 }
 
 // codexClientVersionFromUA 取 UA 的版本段作为生效版本；
