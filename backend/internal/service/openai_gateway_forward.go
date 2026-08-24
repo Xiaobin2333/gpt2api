@@ -24,6 +24,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	clearOpenAIResponsesClientToolMapping(c)
 	clearOpenAIResponsesNamespaceNames(c)
 	setCodexToolNameReverse(c, nil)
+	stageOpenAICodexTurnStateIdentity(c, body)
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
 	}

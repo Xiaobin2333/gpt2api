@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // openAICodexTurnStateHeader 是 Codex 的回合状态头。上游在响应头中铸造该
@@ -16,6 +17,13 @@ import (
 // codex-api/src/sse/responses.rs 与 endpoint/compact.rs）。
 const openAICodexTurnStateHeader = "x-codex-turn-state"
 
+const openAICodexTurnStateIdentityContextKey = "openai_codex_turn_state_identity"
+
+type openAICodexTurnStateIdentity struct {
+	sessionID string
+	turnID    string
+}
+
 // turn-state blob 是上游在"出站身份"（含 #5553 指纹收敛改写后的
 // installation/session/thread 标识）下铸造的，同账号回放自洽；跨账号回放
 // （failover 换号后客户端仍回带旧账号的 blob）是代理链独有、真实 Codex
@@ -23,23 +31,92 @@ const openAICodexTurnStateHeader = "x-codex-turn-state"
 // 账号，出站守卫据此剥离已知异账号的回带值。
 type openAICodexTurnStateOrigin struct {
 	accountID int64
+	turnID    string
 	stateHash [sha256.Size]byte
 	expiresAt time.Time
 }
 
-// openAICodexTurnStateSeed 返回溯源表键：API Key + 客户端原始会话标识。
-// 客户端会话标识取自请求头（与指纹收敛的 thread 派生同源，见
-// extractClientSessionID），确保同一下游会话的记录/守卫两侧使用同一键。
-// 无会话标识时返回空串，表示不做跟踪（保持透传现状）。
-func openAICodexTurnStateSeed(c *gin.Context) string {
+func stageOpenAICodexTurnStateIdentity(c *gin.Context, body []byte) {
+	if c == nil {
+		return
+	}
+	c.Set(openAICodexTurnStateIdentityContextKey, resolveOpenAICodexTurnStateIdentity(c, body))
+}
+
+func stagedOpenAICodexTurnStateIdentity(c *gin.Context) openAICodexTurnStateIdentity {
+	if c == nil {
+		return openAICodexTurnStateIdentity{}
+	}
+	if raw, ok := c.Get(openAICodexTurnStateIdentityContextKey); ok {
+		identity, typed := raw.(openAICodexTurnStateIdentity)
+		if typed {
+			return identity
+		}
+	}
+	return resolveOpenAICodexTurnStateIdentity(c, nil)
+}
+
+func resolveOpenAICodexTurnStateIdentity(c *gin.Context, body []byte) openAICodexTurnStateIdentity {
 	if c == nil || c.Request == nil {
-		return ""
+		return openAICodexTurnStateIdentity{}
 	}
-	sessionID := extractClientSessionID(c.Request.Header)
+	view := openAIRequestPayloadView(body)
+	headerMetadata := strings.TrimSpace(c.Request.Header.Get(openAIWSTurnMetadataHeader))
+	bodyMetadata := strings.TrimSpace(view.Get("client_metadata.x-codex-turn-metadata").String())
+	sessionID, sessionOK := unambiguousOpenAICodexTurnStateValue(
+		extractClientSessionID(c.Request.Header),
+		view.Get("prompt_cache_key").String(),
+		view.Get("client_metadata.session_id").String(),
+		gjson.Get(headerMetadata, "session_id").String(),
+		gjson.Get(bodyMetadata, "session_id").String(),
+	)
 	if sessionID == "" {
+		sessionID, sessionOK = unambiguousOpenAICodexTurnStateValue(
+			c.Request.Header.Get("thread-id"),
+			view.Get("client_metadata.thread_id").String(),
+			gjson.Get(headerMetadata, "thread_id").String(),
+			gjson.Get(bodyMetadata, "thread_id").String(),
+		)
+	}
+	bodyTurnID, bodyTurnOK := unambiguousOpenAICodexTurnStateValue(
+		view.Get("client_metadata.turn_id").String(),
+		gjson.Get(bodyMetadata, "turn_id").String(),
+	)
+	turnID := bodyTurnID
+	turnOK := bodyTurnOK
+	if turnID == "" {
+		turnID, turnOK = unambiguousOpenAICodexTurnStateValue(gjson.Get(headerMetadata, "turn_id").String())
+	}
+	if !sessionOK || !turnOK || sessionID == "" || turnID == "" {
+		return openAICodexTurnStateIdentity{}
+	}
+	return openAICodexTurnStateIdentity{sessionID: sessionID, turnID: turnID}
+}
+
+func unambiguousOpenAICodexTurnStateValue(values ...string) (string, bool) {
+	resolved := ""
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if resolved != "" && resolved != value {
+			return "", false
+		}
+		resolved = value
+	}
+	return resolved, true
+}
+
+// openAICodexTurnStateSeed 返回溯源表键：API Key + 客户端原始会话标识。
+// 会话和 turn 标识在改写前从官方头/体载体中暂存；任一缺失或冲突时返回
+// 空串，禁止网关替客户端猜测 turn 边界。
+func openAICodexTurnStateSeed(c *gin.Context) string {
+	identity := stagedOpenAICodexTurnStateIdentity(c)
+	if identity.sessionID == "" || identity.turnID == "" {
 		return ""
 	}
-	return strconv.FormatInt(getAPIKeyIDFromContext(c), 10) + "\x00" + sessionID
+	return strconv.FormatInt(getAPIKeyIDFromContext(c), 10) + "\x00" + identity.sessionID
 }
 
 // relayOpenAICodexTurnState 将上游响应中的 turn-state 显式写入下游响应头，
@@ -55,6 +132,7 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 	state := extractOpenAICodexTurnState(upstream)
 	if state == "" {
 		c.Writer.Header().Del(canonical)
+		s.clearOpenAICodexTurnStateProvenance(c)
 		return
 	}
 	c.Writer.Header().Set(canonical, state)
@@ -112,30 +190,38 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 	if seed == "" {
 		return
 	}
+	identity := stagedOpenAICodexTurnStateIdentity(c)
 	s.openaiCodexTurnStateOrigins.Store(seed, openAICodexTurnStateOrigin{
 		accountID: account.ID,
+		turnID:    identity.turnID,
 		stateHash: sha256.Sum256([]byte(state)),
 		expiresAt: time.Now().Add(s.openAIWSSessionStickyTTL()),
 	})
 	s.sweepOpenAICodexTurnStateOrigins()
 }
 
-// guardOpenAICodexTurnStateEcho 出站守卫：只允许同一 API key 会话从同一账号
-// 收到、仍在有效期内且 blob 摘要完全相同的 turn-state 回带。任何来源条件
-// 缺失都剥离；只剥离、不注入。
+func (s *OpenAIGatewayService) clearOpenAICodexTurnStateProvenance(c *gin.Context) {
+	if s == nil {
+		return
+	}
+	if seed := openAICodexTurnStateSeed(c); seed != "" {
+		s.openaiCodexTurnStateOrigins.Delete(seed)
+	}
+}
+
+// guardOpenAICodexTurnStateEcho 出站守卫：只允许同一 API key 会话在同一 turn
+// 内向同一账号回带完全相同的 turn-state。新 turn、账号 failover、过期或来源
+// 不明都会剥离；只剥离、不注入。
 func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, account *Account, h http.Header) {
 	if h == nil {
 		return
 	}
 	state := strings.TrimSpace(h.Get(openAICodexTurnStateHeader))
-	if state == "" {
-		h.Del(openAICodexTurnStateHeader)
-		return
-	}
 	if s == nil || account == nil || account.ID <= 0 {
 		h.Del(openAICodexTurnStateHeader)
 		return
 	}
+	identity := stagedOpenAICodexTurnStateIdentity(c)
 	seed := openAICodexTurnStateSeed(c)
 	if seed == "" {
 		h.Del(openAICodexTurnStateHeader)
@@ -157,7 +243,12 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 		h.Del(openAICodexTurnStateHeader)
 		return
 	}
-	if origin.accountID != account.ID || origin.stateHash != sha256.Sum256([]byte(state)) {
+	if origin.turnID != identity.turnID || origin.accountID != account.ID {
+		s.openaiCodexTurnStateOrigins.Delete(seed)
+		h.Del(openAICodexTurnStateHeader)
+		return
+	}
+	if state == "" || origin.stateHash != sha256.Sum256([]byte(state)) {
 		h.Del(openAICodexTurnStateHeader)
 	}
 }

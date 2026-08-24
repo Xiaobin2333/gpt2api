@@ -64,19 +64,35 @@ func TestOpenAIWSStateStore_ResponseConnTTL(t *testing.T) {
 
 func TestOpenAIWSStateStore_SessionTurnStateTTL(t *testing.T) {
 	store := NewOpenAIWSStateStore(nil)
-	store.BindSessionTurnState(9, "session_hash_1", "turn_state_1", 30*time.Millisecond)
+	store.BindSessionTurnState(9, 101, "session_hash_1", "turn-1", "turn_state_1", 30*time.Millisecond)
 
-	state, ok := store.GetSessionTurnState(9, "session_hash_1")
+	state, ok := store.GetSessionTurnState(9, 101, "session_hash_1", "turn-1")
 	require.True(t, ok)
 	require.Equal(t, "turn_state_1", state)
 
 	// group 隔离
-	_, ok = store.GetSessionTurnState(10, "session_hash_1")
+	_, ok = store.GetSessionTurnState(10, 101, "session_hash_1", "turn-1")
 	require.False(t, ok)
 
 	time.Sleep(60 * time.Millisecond)
-	_, ok = store.GetSessionTurnState(9, "session_hash_1")
+	_, ok = store.GetSessionTurnState(9, 101, "session_hash_1", "turn-1")
 	require.False(t, ok)
+}
+
+func TestOpenAIWSStateStore_SessionTurnStateRejectsNewTurnAndAccount(t *testing.T) {
+	store := NewOpenAIWSStateStore(nil)
+	store.BindSessionTurnState(9, 101, "session_hash_1", "turn-1", "turn_state_1", time.Hour)
+
+	_, ok := store.GetSessionTurnState(9, 101, "session_hash_1", "turn-2")
+	require.False(t, ok)
+	_, ok = store.GetSessionTurnState(9, 101, "session_hash_1", "turn-1")
+	require.False(t, ok, "new turn lookup must delete the stale binding")
+
+	store.BindSessionTurnState(9, 101, "session_hash_1", "turn-3", "turn_state_3", time.Hour)
+	_, ok = store.GetSessionTurnState(9, 102, "session_hash_1", "turn-3")
+	require.False(t, ok)
+	_, ok = store.GetSessionTurnState(9, 101, "session_hash_1", "turn-3")
+	require.False(t, ok, "account failover lookup must delete the stale binding")
 }
 
 func TestOpenAIWSStateStore_SessionConnTTL(t *testing.T) {

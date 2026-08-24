@@ -127,9 +127,23 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
 	}
-	if turnState == "" && stateStore != nil && sessionHash != "" {
-		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
-			turnState = savedTurnState
+	turnIdentity := stagedOpenAICodexTurnStateIdentity(c).turnID
+	clientProvidedTurnState := turnState != ""
+	if clientProvidedTurnState {
+		validated := http.Header{openAIWSTurnStateHeader: []string{turnState}}
+		s.guardOpenAICodexTurnStateEcho(c, account, validated)
+		turnState = strings.TrimSpace(validated.Get(openAIWSTurnStateHeader))
+	}
+	if stateStore != nil && sessionHash != "" {
+		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, account.ID, sessionHash, turnIdentity); ok {
+			if !clientProvidedTurnState {
+				turnState = savedTurnState
+			} else if turnState == "" || turnState != savedTurnState {
+				stateStore.DeleteSessionTurnState(groupID, sessionHash)
+				turnState = ""
+			}
+		} else if clientProvidedTurnState && turnState == "" {
+			turnState = ""
 		}
 	}
 	preferredConnID := ""
@@ -314,7 +328,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 	if handshakeTurnState != "" {
 		if stateStore != nil && sessionHash != "" {
-			stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
+			stateStore.BindSessionTurnState(groupID, account.ID, sessionHash, turnIdentity, handshakeTurnState, s.openAIWSSessionStickyTTL())
 		}
 		if c != nil {
 			c.Header(http.CanonicalHeaderKey(openAIWSTurnStateHeader), handshakeTurnState)

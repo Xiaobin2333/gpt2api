@@ -22,6 +22,7 @@ func newTurnStateTestContext(t *testing.T, apiKeyID int64, sessionID string) (*g
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	if sessionID != "" {
 		c.Request.Header.Set("session_id", sessionID)
+		c.Request.Header.Set("x-codex-turn-metadata", `{"turn_id":"turn-`+sessionID+`"}`)
 	}
 	if apiKeyID > 0 {
 		c.Set("api_key", &APIKey{ID: apiKeyID})
@@ -60,6 +61,7 @@ func TestRelayOpenAICodexTurnState_SetsHeaderAndRecordsProvenance(t *testing.T) 
 	origin, ok := raw.(openAICodexTurnStateOrigin)
 	require.True(t, ok)
 	require.Equal(t, int64(42), origin.accountID)
+	require.Equal(t, "turn-sess-relay", origin.turnID)
 	require.Equal(t, sha256.Sum256([]byte("blob-A")), origin.stateHash)
 	require.True(t, origin.expiresAt.After(time.Now()))
 }
@@ -178,6 +180,24 @@ func TestGuardOpenAICodexTurnStateEcho(t *testing.T) {
 		h := newOutbound("blob-A")
 		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 43}, h)
 		require.Empty(t, h.Get("x-codex-turn-state"))
+		_, ok := svc.openaiCodexTurnStateOrigins.Load("7\x00sess-g2")
+		require.False(t, ok, "account failover must invalidate the old provenance")
+	})
+
+	t.Run("new_turn_strips_echo_and_invalidates_provenance", func(t *testing.T) {
+		svc := &OpenAIGatewayService{}
+		c, _ := newTurnStateTestContext(t, 7, "sess-new-turn")
+		upstream := http.Header{}
+		upstream.Set("x-codex-turn-state", "blob-A")
+		svc.relayOpenAICodexTurnState(c, &Account{ID: 42}, upstream)
+
+		c.Request.Header.Set("x-codex-turn-metadata", `{"turn_id":"turn-next"}`)
+		stageOpenAICodexTurnStateIdentity(c, nil)
+		h := newOutbound("blob-A")
+		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 42}, h)
+		require.Empty(t, h.Get("x-codex-turn-state"))
+		_, ok := svc.openaiCodexTurnStateOrigins.Load("7\x00sess-new-turn")
+		require.False(t, ok, "new turn must invalidate the old provenance")
 	})
 
 	t.Run("same_account_different_blob_strips_echo", func(t *testing.T) {

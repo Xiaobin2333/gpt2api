@@ -1336,14 +1336,14 @@ func TestOpenAIGatewayService_Forward_WSv2_TurnStateAndMetadataReplayOnReconnect
 	c1, _ := gin.CreateTestContext(rec1)
 	c1.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	c1.Request.Header.Set("session_id", "session_turn_state")
-	c1.Request.Header.Set("x-codex-turn-metadata", "turn_meta_1")
+	c1.Request.Header.Set("x-codex-turn-metadata", `{"session_id":"session_turn_state","turn_id":"turn-1"}`)
 	result1, err := svc.Forward(context.Background(), c1, account, reqBody)
 	require.NoError(t, err)
 	require.NotNil(t, result1)
 
 	sessionHash := svc.GenerateSessionHash(c1, reqBody)
 	store := svc.getOpenAIWSStateStore()
-	turnState, ok := store.GetSessionTurnState(0, sessionHash)
+	turnState, ok := store.GetSessionTurnState(0, account.ID, sessionHash, "turn-1")
 	require.True(t, ok)
 	require.Equal(t, "turn_state_first", turnState)
 
@@ -1356,16 +1356,31 @@ func TestOpenAIGatewayService_Forward_WSv2_TurnStateAndMetadataReplayOnReconnect
 	c2, _ := gin.CreateTestContext(rec2)
 	c2.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	c2.Request.Header.Set("session_id", "session_turn_state")
-	c2.Request.Header.Set("x-codex-turn-metadata", "turn_meta_2")
+	c2.Request.Header.Set("x-codex-turn-metadata", `{"session_id":"session_turn_state","turn_id":"turn-1"}`)
 	result2, err := svc.Forward(context.Background(), c2, account, reqBody)
 	require.NoError(t, err)
 	require.NotNil(t, result2)
 
 	firstHandshakeHeaders := <-headersCh
 	secondHandshakeHeaders := <-headersCh
-	require.Equal(t, "turn_meta_1", firstHandshakeHeaders.Get("X-Codex-Turn-Metadata"))
-	require.Equal(t, "turn_meta_2", secondHandshakeHeaders.Get("X-Codex-Turn-Metadata"))
+	require.JSONEq(t, `{"session_id":"session_turn_state","turn_id":"turn-1"}`, firstHandshakeHeaders.Get("X-Codex-Turn-Metadata"))
+	require.JSONEq(t, `{"session_id":"session_turn_state","turn_id":"turn-1"}`, secondHandshakeHeaders.Get("X-Codex-Turn-Metadata"))
 	require.Equal(t, "turn_state_first", secondHandshakeHeaders.Get("X-Codex-Turn-State"))
+
+	// 新 turn 即使复用同一 session，也不得回放上一 turn 的 routing token。
+	connID, hasConn = store.GetResponseConn(result2.RequestID)
+	require.True(t, hasConn)
+	svc.getOpenAIWSConnPool().evictConn(account.ID, connID)
+	rec3 := httptest.NewRecorder()
+	c3, _ := gin.CreateTestContext(rec3)
+	c3.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c3.Request.Header.Set("session_id", "session_turn_state")
+	c3.Request.Header.Set("x-codex-turn-metadata", `{"session_id":"session_turn_state","turn_id":"turn-2"}`)
+	result3, err := svc.Forward(context.Background(), c3, account, reqBody)
+	require.NoError(t, err)
+	require.NotNil(t, result3)
+	thirdHandshakeHeaders := <-headersCh
+	require.Empty(t, thirdHandshakeHeaders.Get("X-Codex-Turn-State"))
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_GeneratePrewarm(t *testing.T) {
