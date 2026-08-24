@@ -783,6 +783,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// 与该账号真实出站的身份不是同一个（issue #3901 的配对不变式由收口保证）。
 		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 		stripOpenAILegacyResponsesBeta(req.Header)
+		applyCodexAccountProbeSessionHeaders(req.Header, credentialAccount, account.ID)
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -2114,17 +2115,10 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 		stripOpenAILegacyResponsesBeta(req.Header)
 	}
-	probeSessionID := compactProbeSessionID(account.ID)
-	req.Header.Set("session-id", probeSessionID)
-
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
-		// 指纹收敛只改写探针实际携带的 session-id，不补造 installation、
-		// thread、turn 或 window 载体。
-		if fpIDs := resolveCodexFingerprintIDsFromRequest(credentialAccount, req.Header); fpIDs != nil {
-			applyCodexFingerprintHeaders(req.Header, fpIDs)
-		}
+		applyCodexAccountProbeSessionHeaders(req.Header, credentialAccount, account.ID)
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -3033,6 +3027,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	// 与该账号真实出站的身份不是同一个（issue #3901 的配对不变式由收口保证）。
 	enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 	stripOpenAILegacyResponsesBeta(req.Header)
+	applyCodexAccountProbeSessionHeaders(req.Header, credentialAccount, account.ID)
 	applyOpenAICodexBetaFeatures(c, credentialAccount, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, credentialAccount, responsesBody)
 	sanitizeCodexOAuthOutboundHeaders(req.Header)

@@ -504,6 +504,10 @@ func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, account
 			return nil, "", fmt.Errorf("agent identity shadow credentials are unavailable")
 		}
 	}
+	// WHAM has a narrower header contract than /responses, but it still uses the
+	// same CLI User-Agent as the credential account. This also makes Spark shadow
+	// quota requests inherit the parent account's device/terminal identity.
+	headers["user-agent"] = resolveCodexOutboundIdentity(account.GetOpenAIUserAgent()).userAgent
 	if !account.IsOpenAIAgentIdentity() {
 		return headers, "", nil
 	}

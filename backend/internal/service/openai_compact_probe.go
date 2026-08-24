@@ -162,3 +162,15 @@ func compactProbeSessionID(accountID int64) string {
 	}
 	return deriveStableUUIDv7(scopedCodexFingerprintSeed("codex-compact-probe-session-v2", accountKey))
 }
+
+// applyCodexAccountProbeSessionHeaders gives every synthetic OAuth account
+// probe a stable CLI-shaped session, then applies the account's normal
+// convergence policy to that real carrier. It deliberately does not fabricate
+// installation, thread, turn, or window headers.
+func applyCodexAccountProbeSessionHeaders(h http.Header, credentialAccount *Account, probeAccountID int64) {
+	if h == nil || credentialAccount == nil {
+		return
+	}
+	h.Set("session-id", compactProbeSessionID(probeAccountID))
+	applyCodexFingerprintHeaders(h, resolveCodexFingerprintIDsFromRequest(credentialAccount, h))
+}

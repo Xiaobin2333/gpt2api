@@ -124,7 +124,10 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Concurrency: 1,
-		Credentials: map[string]any{"access_token": "test-token"},
+		Credentials: map[string]any{
+			"access_token": "test-token",
+			"user_agent":   "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
+		},
 	}
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
@@ -134,6 +137,14 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Empty(t, upstream.requests[0].Header.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", upstream.requests[0].Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "model=gpt-5.4", upstream.requests[0].Header.Get("X-Codex-Routing-Hint"))
+	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", upstream.requests[0].Header.Get("User-Agent"))
+	probeHeaders := make(http.Header)
+	probeHeaders.Set("session-id", compactProbeSessionID(account.ID))
+	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, probeHeaders)
+	require.NotNil(t, expectedIDs)
+	require.Equal(t, expectedIDs.sessionID, upstream.requests[0].Header.Get("session-id"))
+	require.Empty(t, upstream.requests[0].Header.Get("x-codex-installation-id"))
+	require.Empty(t, upstream.requests[0].Header.Get("thread-id"))
 	require.NotEmpty(t, repo.updatedExtra)
 	require.Equal(t, 42.0, repo.updatedExtra["codex_5h_used_percent"])
 	require.Equal(t, 88.0, repo.updatedExtra["codex_7d_used_percent"])

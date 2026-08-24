@@ -534,6 +534,7 @@ func TestQueryUsageIncludesResetCreditExpirations_EndToEnd(t *testing.T) {
 		Status:   StatusActive,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-parent123",
+			"user_agent":         "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
 		},
 	}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{100: account}}
@@ -569,8 +570,9 @@ func TestQueryUsageIncludesResetCreditExpirations_EndToEnd(t *testing.T) {
 	require.NotNil(t, usage.RateLimitResetCredits)
 	require.Equal(t, 2, usage.RateLimitResetCredits.AvailableCount)
 	require.Equal(t, 1, detailCalls)
-	require.Equal(t, CodexCanonicalUserAgent(), capturedHeaders.Get("User-Agent"))
-	for _, absent := range []string{"Originator", "Accept", "OpenAI-Beta", "OAI-Language", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Priority"} {
+	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", capturedHeaders.Get("User-Agent"))
+	require.NotContains(t, capturedHeaders.Get("User-Agent"), "0.125.0")
+	for _, absent := range []string{"Originator", "Version", "Accept", "OpenAI-Beta", "OAI-Language", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Priority"} {
 		require.Empty(t, capturedHeaders.Get(absent), "%s must not leak a browser or legacy quota identity", absent)
 	}
 	require.Equal(t, []OpenAIRateLimitResetCreditDetail{

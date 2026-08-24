@@ -40,6 +40,7 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
 			"access_token": "token-123",
+			"user_agent":   "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
 		},
 	}
 
@@ -50,6 +51,14 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "remote_compaction_v2", upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "model=gpt-5.4-mini", upstream.lastReq.Header.Get("X-Codex-Routing-Hint"))
+	require.Equal(t, "codex_cli_rs/"+codexCLIVersion+" (Ubuntu 22.4.0; x86_64) xterm-256color", upstream.lastReq.Header.Get("User-Agent"))
+	probeHeaders := make(http.Header)
+	probeHeaders.Set("session-id", compactProbeSessionID(account.ID))
+	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, probeHeaders)
+	require.NotNil(t, expectedIDs)
+	require.Equal(t, expectedIDs.sessionID, upstream.lastReq.Header.Get("session-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("thread-id"))
 	require.Contains(t, rec.Body.String(), "Calling Codex /responses image tool")
 	require.Contains(t, rec.Body.String(), "data:image/png;base64,aGVsbG8=")
 	require.Contains(t, rec.Body.String(), "\"success\":true")
