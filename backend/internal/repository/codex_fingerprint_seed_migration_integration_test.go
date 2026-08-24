@@ -328,6 +328,66 @@ WHERE id = $1
 	}
 }
 
+func TestMigration233ConvergesAllExistingOpenAIOAuthAccountsToSession(t *testing.T) {
+	tx := testTx(t)
+	ctx := context.Background()
+	migrationSQL, err := dbmigrations.FS.ReadFile("233_converge_all_codex_oauth_accounts_to_session.sql")
+	require.NoError(t, err)
+
+	type fixture struct {
+		name        string
+		accountType string
+		extra       string
+		wantMode    string
+		wantSeed    bool
+	}
+	fixtures := []fixture{
+		{name: "missing", accountType: service.AccountTypeOAuth, extra: `{}`, wantMode: "session", wantSeed: true},
+		{name: "off", accountType: service.AccountTypeOAuth, extra: `{"codex_fingerprint_mode":"off"}`, wantMode: "session", wantSeed: true},
+		{name: "device", accountType: service.AccountTypeOAuth, extra: `{"codex_fingerprint_mode":"device"}`, wantMode: "session", wantSeed: true},
+		{name: "full", accountType: service.AccountTypeOAuth, extra: `{"codex_fingerprint_mode":"full"}`, wantMode: "session", wantSeed: true},
+		{name: "preserve-seed", accountType: service.AccountTypeOAuth, extra: `{"codex_fingerprint_mode":"full","codex_fingerprint_seed":"22222222-2222-4222-8222-222222222222"}`, wantMode: "session", wantSeed: true},
+		{name: "apikey", accountType: service.AccountTypeAPIKey, extra: `{"codex_fingerprint_mode":"off"}`, wantMode: "off", wantSeed: false},
+	}
+
+	ids := make([]int64, len(fixtures))
+	for i, item := range fixtures {
+		require.NoError(t, tx.QueryRowContext(ctx, `
+INSERT INTO accounts (name, platform, type, extra)
+VALUES ($1, 'openai', $2, $3::jsonb)
+RETURNING id
+`, "migration-233-"+item.name, item.accountType, item.extra).Scan(&ids[i]))
+	}
+
+	_, err = tx.ExecContext(ctx, string(migrationSQL))
+	require.NoError(t, err)
+
+	seeds := make([]string, len(fixtures))
+	for i, item := range fixtures {
+		var mode string
+		require.NoError(t, tx.QueryRowContext(ctx, `
+SELECT COALESCE(extra->>'codex_fingerprint_mode', ''), COALESCE(extra->>'codex_fingerprint_seed', '')
+FROM accounts
+WHERE id = $1
+`, ids[i]).Scan(&mode, &seeds[i]))
+		require.Equal(t, item.wantMode, mode)
+		if item.wantSeed {
+			requireCanonicalUUIDString(t, seeds[i])
+		} else {
+			require.Empty(t, seeds[i])
+		}
+	}
+	require.Equal(t, "22222222-2222-4222-8222-222222222222", seeds[4])
+
+	_, err = tx.ExecContext(ctx, string(migrationSQL))
+	require.NoError(t, err)
+	for i, want := range seeds {
+		var got string
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT COALESCE(extra->>'codex_fingerprint_seed', '') FROM accounts WHERE id = $1`, ids[i]).Scan(&got))
+		require.Equal(t, want, got)
+	}
+}
+
 func TestBulkUpdateGeneratesDistinctStableCodexFingerprintSeedsPerEligibleRow(t *testing.T) {
 	ctx := context.Background()
 	testName := "bulk-codex-seed-" + uuid.NewString()

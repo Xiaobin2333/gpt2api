@@ -78,9 +78,9 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
 		{"OpenAI setup token", &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken, Extra: map[string]any{codexFingerprintModeExtraKey: "session"}}, codexFingerprintSession},
 		{"Anthropic setup token", &Account{Platform: PlatformAnthropic, Type: AccountTypeSetupToken, Extra: map[string]any{codexFingerprintModeExtraKey: "session"}}, codexFingerprintOff},
-		{"无 extra 默认 full", newTestOAuthAccount(1, nil), codexFingerprintFull},
-		{"空值默认 full", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintFull},
-		{"非法值默认 full", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintFull},
+		{"无 extra 默认 session", newTestOAuthAccount(1, nil), codexFingerprintSession},
+		{"空值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintSession},
+		{"非法值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintSession},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
@@ -186,12 +186,12 @@ func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing
 	require.NotEqual(t, first.turnID, followUp.turnID)
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsFull(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
 
 	require.NotNil(t, ids)
-	require.Equal(t, codexFingerprintFull, ids.mode)
+	require.Equal(t, codexFingerprintSession, ids.mode)
 	require.NotEmpty(t, ids.installationID)
 	require.NotEmpty(t, ids.sessionID)
 	require.Equal(t, ids.sessionID, ids.threadID)

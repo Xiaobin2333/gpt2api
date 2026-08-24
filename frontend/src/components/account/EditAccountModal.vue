@@ -3232,7 +3232,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('full')
+const codexFingerprintMode = ref<CodexFingerprintMode>('session')
 type CodexImageToolMode = 'inherit' | 'enabled' | 'disabled' | 'block'
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
@@ -3711,7 +3711,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
-  codexFingerprintMode.value = 'full'
+  codexFingerprintMode.value = 'session'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -3765,10 +3765,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
     if (newAccount.type === 'oauth') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
-      // 缺省/非法值按 full 呈现，与后端 GetCodexFingerprintMode 的默认语义一致。
+      // 缺省/非法值按 session 呈现，与后端 GetCodexFingerprintMode 的默认语义一致。
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
-        : 'full')
+        : 'session')
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -5199,7 +5199,7 @@ const handleSubmit = async () => {
         }
       }
 
-      // 始终写入管理员选择；off 必须显式落键，否则缺省值会回落到 full。
+      // 始终写入管理员选择；off 必须显式落键，否则缺省值会回落到 session。
       if (props.account.type === 'oauth') {
         newExtra.codex_fingerprint_mode = codexFingerprintMode.value
       }
