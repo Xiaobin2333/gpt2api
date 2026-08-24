@@ -141,8 +141,9 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.installationID = strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
 	}
 	if identity.installationID == "" && account != nil {
-		if seed, ok := codexFingerprintSeedForConvergence(account); ok {
-			identity.installationID = resolveConvergedInstallationID(account, seed)
+		identitySource := codexAccountIdentitySource(c, account)
+		if seed, ok := codexFingerprintSeedForConvergence(identitySource); ok {
+			identity.installationID = resolveConvergedInstallationID(identitySource, seed)
 		}
 	}
 	if identity.sessionID == "" {
@@ -309,7 +310,7 @@ func normalizeCodexOAuthRequestMetadataWithIDs(c *gin.Context, account *Account,
 		if c != nil && c.Request != nil {
 			headers = c.Request.Header
 		}
-		ids = resolveCodexFingerprintIDsFromRequest(account, headers)
+		ids = resolveCodexFingerprintIDsFromRequest(codexAccountIdentitySource(c, account), headers)
 	}
 	next, _, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	if err != nil {

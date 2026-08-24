@@ -635,6 +635,16 @@ func activeCodexFingerprintPoolAccountForTest(id int64) *Account {
 	}
 }
 
+func TestOpenAIWSAcquireIdentityAccountUsesShadowParent(t *testing.T) {
+	parent := activeCodexFingerprintPoolAccountForTest(131)
+	parentID := parent.ID
+	shadow := &Account{ID: 132, ParentAccountID: &parentID, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	req := openAIWSAcquireRequest{Account: shadow, CodexIdentityAccount: parent}
+
+	require.Same(t, parent, openAIWSAcquireIdentityAccount(req))
+	require.Equal(t, codexFingerprintSession, activeCodexFingerprintMode(openAIWSAcquireIdentityAccount(req)))
+}
+
 func stableOpenAIWSIdentityHeadersForTest() http.Header {
 	headers := make(http.Header)
 	headers.Set("X-Codex-Beta-Features", "remote_compaction_v2,responses_websockets_v2")

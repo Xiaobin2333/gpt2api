@@ -2122,7 +2122,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 		// 指纹收敛只改写探针实际携带的 session-id，不补造 installation、
 		// thread、turn 或 window 载体。
-		if fpIDs := resolveCodexFingerprintIDsFromRequest(account, req.Header); fpIDs != nil {
+		if fpIDs := resolveCodexFingerprintIDsFromRequest(credentialAccount, req.Header); fpIDs != nil {
 			applyCodexFingerprintHeaders(req.Header, fpIDs)
 		}
 	}

@@ -73,7 +73,8 @@ func stagedCodexFingerprintIDs(c *gin.Context, account *Account) *codexFingerpri
 		return nil
 	}
 	ids, ok := value.(*codexFingerprintIDs)
-	if !ok || ids == nil || ids.accountID != account.ID {
+	identitySource := codexAccountIdentitySource(c, account)
+	if !ok || ids == nil || identitySource == nil || ids.accountID != identitySource.ID {
 		return nil
 	}
 	return ids
@@ -479,7 +480,11 @@ func resolveCodexFingerprintIDsForPayload(c *gin.Context, account *Account, clie
 	if account == nil {
 		return nil
 	}
-	mode := account.GetCodexFingerprintMode()
+	identitySource := codexAccountIdentitySource(c, account)
+	if identitySource == nil {
+		return nil
+	}
+	mode := identitySource.GetCodexFingerprintMode()
 	if mode == codexFingerprintOff {
 		return nil
 	}
@@ -504,7 +509,7 @@ func resolveCodexFingerprintIDsForPayload(c *gin.Context, account *Account, clie
 			clientSessionID = fmt.Sprintf("downstream-api-key:%d", apiKeyID)
 		}
 	}
-	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
+	return resolveCodexFingerprintIDs(identitySource, clientSessionID, mode)
 }
 
 // resolveCodexFingerprintIDsForWSTurn keeps the first WS frame and handshake
@@ -524,7 +529,7 @@ func resolveCodexFingerprintIDsForWSTurn(c *gin.Context, account *Account, turn 
 	if c != nil && c.Request != nil {
 		clientHeaders = c.Request.Header
 	}
-	return resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+	return resolveCodexFingerprintIDsFromRequest(codexAccountIdentitySource(c, account), clientHeaders)
 }
 
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
