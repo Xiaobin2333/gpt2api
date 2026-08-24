@@ -146,7 +146,7 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"chatgpt_account_id": "account-oauth-passthrough",
+			"chatgpt_account_id": "account-agent-passthrough",
 		},
 	}
 	oauthRecorder := httptest.NewRecorder()

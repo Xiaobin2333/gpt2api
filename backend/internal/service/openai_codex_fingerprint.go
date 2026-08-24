@@ -65,7 +65,7 @@ func stageCodexFingerprintIDs(c *gin.Context, ids *codexFingerprintIDs) {
 }
 
 func stagedCodexFingerprintIDs(c *gin.Context, account *Account) *codexFingerprintIDs {
-	if c == nil || account == nil || account.Type != AccountTypeOAuth {
+	if c == nil || account == nil || !account.UsesOpenAICodexProtocol() {
 		return nil
 	}
 	value, ok := c.Get(codexFingerprintIDsContextKey)
@@ -77,6 +77,14 @@ func stagedCodexFingerprintIDs(c *gin.Context, account *Account) *codexFingerpri
 		return nil
 	}
 	return ids
+}
+
+func hasStagedCodexFingerprintAttempt(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	_, ok := c.Get(codexFingerprintIDsContextKey)
+	return ok
 }
 
 // applyStagedCodexFingerprintHeaders 读取 context 暂存的收敛 ID 并改写出站头。
@@ -207,7 +215,7 @@ func codexFingerprintSeedForConvergence(account *Account) (string, bool) {
 
 func prepareCodexFingerprintExtraForCreate(platform, accountType string, extra map[string]any) map[string]any {
 	prepared := stripCodexFingerprintSeed(extra)
-	if platform != PlatformOpenAI || accountType != AccountTypeOAuth {
+	if platform != PlatformOpenAI || (accountType != AccountTypeOAuth && accountType != AccountTypeSetupToken) {
 		return prepared
 	}
 	if _, configured := configuredCodexFingerprintMode(prepared); !configured {
@@ -228,7 +236,7 @@ func prepareCodexFingerprintExtraForCreate(platform, accountType string, extra m
 
 func prepareCodexFingerprintExtraForUpdate(account *Account, extra map[string]any) map[string]any {
 	prepared := stripCodexFingerprintSeed(extra)
-	if account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
+	if account == nil || !account.IsOpenAIOAuthLike() {
 		return prepared
 	}
 	if seed, ok := codexFingerprintSeed(account.Extra); ok {
@@ -271,7 +279,7 @@ func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) boo
 // OpenAI OAuth 账号未设置、空值或非法值时统一使用 full；管理员显式配置
 // off / device / session / full 时保留该选择。非 OAuth 账号始终返回 off。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
-	if a == nil || !a.IsOpenAIOAuth() {
+	if a == nil || !a.IsOpenAIOAuthLike() {
 		return codexFingerprintOff
 	}
 	return codexFingerprintModeFromExtra(a.Extra)
