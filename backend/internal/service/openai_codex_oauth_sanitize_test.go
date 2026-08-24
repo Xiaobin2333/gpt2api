@@ -98,6 +98,92 @@ func TestSanitizeCodexOAuthJSONBodyPreservesInvalidOrUnchangedBody(t *testing.T)
 	require.Equal(t, clean, got)
 }
 
+func TestSanitizeCodexOAuthJSONBodyForSchemaEnforces01491TopLevelFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		schema        codexOAuthRequestSchema
+		body          string
+		wantFields    []string
+		droppedFields []string
+	}{
+		{
+			name:   "responses",
+			schema: codexOAuthRequestSchemaResponses,
+			body: `{
+				"model":"gpt-5.4","instructions":"test","input":[],"tools":[],
+				"tool_choice":"auto","parallel_tool_calls":false,"reasoning":null,
+				"store":false,"stream":true,"stream_options":{},"include":[],
+				"service_tier":"default","prompt_cache_key":"cache","text":{},
+				"client_metadata":{"session_id":"session"},
+				"type":"response.create","previous_response_id":"resp_123","generate":true,
+				"max_output_tokens":123,"future_field":"drop"
+			}`,
+			wantFields: []string{
+				"model", "instructions", "input", "tools", "tool_choice",
+				"parallel_tool_calls", "reasoning", "store", "stream",
+				"stream_options", "include", "service_tier", "prompt_cache_key",
+				"text", "client_metadata",
+			},
+			droppedFields: []string{"type", "previous_response_id", "generate", "max_output_tokens", "future_field"},
+		},
+		{
+			name:   "websocket_response_create",
+			schema: codexOAuthRequestSchemaWebSocketResponseCreate,
+			body: `{
+				"type":"response.create","model":"gpt-5.4","input":[],
+				"previous_response_id":"resp_123","generate":false,
+				"client_metadata":{"session_id":"session"},"background":true,"future_field":"drop"
+			}`,
+			wantFields:    []string{"type", "model", "input", "previous_response_id", "generate", "client_metadata"},
+			droppedFields: []string{"background", "future_field"},
+		},
+		{
+			name:   "compact",
+			schema: codexOAuthRequestSchemaCompact,
+			body: `{
+				"model":"gpt-5.4","input":[],"instructions":"test","tools":[],
+				"parallel_tool_calls":false,"reasoning":null,"service_tier":"default",
+				"prompt_cache_key":"cache","text":{},
+				"tool_choice":"auto","store":false,"stream":false,"include":[],
+				"client_metadata":{"session_id":"session"},"previous_response_id":"resp_123"
+			}`,
+			wantFields: []string{
+				"model", "input", "instructions", "tools", "parallel_tool_calls",
+				"reasoning", "service_tier", "prompt_cache_key", "text",
+			},
+			droppedFields: []string{"tool_choice", "store", "stream", "include", "client_metadata", "previous_response_id"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := sanitizeCodexOAuthJSONBodyForSchema([]byte(tt.body), tt.schema)
+			require.True(t, changed)
+			for _, field := range tt.wantFields {
+				require.True(t, gjson.GetBytes(got, field).Exists(), field)
+			}
+			for _, field := range tt.droppedFields {
+				require.False(t, gjson.GetBytes(got, field).Exists(), field)
+			}
+		})
+	}
+}
+
+func TestSanitizeCodexOAuthJSONBodyForSchemaPreservesNestedPayloads(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.4",
+		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello","vendor_extension":{"keep":true}}]}],
+		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"future":{"type":"string","x-vendor":"keep"}}}}],
+		"future_top_level":"drop"
+	}`)
+
+	got, changed := sanitizeCodexOAuthJSONBodyForSchema(body, codexOAuthRequestSchemaResponses)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(got, "future_top_level").Exists())
+	require.True(t, gjson.GetBytes(got, "input.0.content.0.vendor_extension.keep").Bool())
+	require.Equal(t, "keep", gjson.GetBytes(got, "tools.0.parameters.properties.future.x-vendor").String())
+}
+
 func TestSanitizeCodexOAuthJSONBodyDropsInvalidClientMetadataShape(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","client_metadata":"Pi/private-marker","Client_Metadata":{"session_id":"case-marker"},"x-codex-turn-metadata":"{\"session_id\":\"top-level-marker\"}"}`)
 	got, changed := sanitizeCodexOAuthJSONBody(body)
@@ -184,7 +270,8 @@ func TestCodex01491TUIStripsUnavailableAttestationHeader(t *testing.T) {
 func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	request := map[string]any{
-		"model": "gpt-5.4",
+		"model":            "gpt-5.4",
+		"future_top_level": "drop-for-oauth",
 		"client_metadata": map[string]any{
 			"session_id":  "session-keep",
 			"base_url":    "https://relay.example",
@@ -199,12 +286,14 @@ func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
 	require.NotContains(t, oauthMetadata, "base_url")
 	require.NotContains(t, oauthMetadata, "device_id")
 	require.NotContains(t, oauthMetadata, "app.version")
+	require.NotContains(t, oauthPayload, "future_top_level")
 
 	apiKeyPayload := svc.buildOpenAIWSCreatePayload(request, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
 	apiKeyMetadata := apiKeyPayload["client_metadata"].(map[string]any)
 	require.Equal(t, "https://relay.example", apiKeyMetadata["base_url"])
 	require.Equal(t, "device-leak", apiKeyMetadata["device_id"])
 	require.Equal(t, "9.9.9", apiKeyMetadata["app.version"])
+	require.Equal(t, "drop-for-oauth", apiKeyPayload["future_top_level"])
 }
 
 func TestSanitizeCodexOAuthTurnMetadataDropsOpaqueSensitiveValue(t *testing.T) {

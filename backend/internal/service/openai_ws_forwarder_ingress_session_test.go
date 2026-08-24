@@ -817,7 +817,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	require.Contains(t, gjson.Get(nonLitePayload, "instructions").String(), "image_generation")
 	require.False(t, gjson.Get(nonLitePayload, "reasoning.context").Exists())
 	require.True(t, gjson.Get(nonLitePayload, "parallel_tool_calls").Bool())
-	require.Equal(t, "900719925474099312345", gjson.Get(nonLitePayload, "sequence").Raw)
+	require.False(t, gjson.Get(nonLitePayload, "sequence").Exists(), "non-Codex top-level fields must not reach upstream")
 
 	litePayload := requestToJSONString(captureConn.writes[1])
 	require.False(t, gjson.Get(litePayload, `tools.#(type=="image_generation")`).Exists())

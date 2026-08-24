@@ -801,6 +801,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
 		}
 		firstClientMessage = normalized
+		if sanitized, changed := sanitizeCodexOAuthJSONBodyForSchema(firstClientMessage, codexOAuthRequestSchemaWebSocketResponseCreate); changed {
+			firstClientMessage = sanitized
+		}
 	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
@@ -1120,6 +1123,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
 					}
 					out = normalized
+					if sanitized, changed := sanitizeCodexOAuthJSONBodyForSchema(out, codexOAuthRequestSchemaWebSocketResponseCreate); changed {
+						out = sanitized
+					}
 				}
 			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）

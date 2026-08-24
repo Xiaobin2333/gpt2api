@@ -223,6 +223,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	if account != nil && account.UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(account) {
 		payload["store"] = false
 	}
+	if account != nil && account.IsOpenAIOAuth() {
+		sanitizeCodexOAuthRequestMapForSchema(payload, codexOAuthRequestSchemaWebSocketResponseCreate)
+	}
 	return payload
 }
 

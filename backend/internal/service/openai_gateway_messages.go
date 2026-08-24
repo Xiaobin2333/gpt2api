@@ -287,6 +287,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	if account.IsOpenAIOAuth() {
+		if sanitizedBody, changed := sanitizeCodexOAuthJSONBodyForSchema(responsesBody, codexOAuthRequestSchemaResponses); changed {
+			responsesBody = sanitizedBody
+		}
+	}
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
 		grokIntentBody := responsesBody

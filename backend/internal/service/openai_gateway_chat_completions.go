@@ -301,6 +301,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	if account.IsOpenAIOAuth() {
+		if sanitizedBody, changed := sanitizeCodexOAuthJSONBodyForSchema(responsesBody, codexOAuthRequestSchemaResponses); changed {
+			responsesBody = sanitizedBody
+		}
+	}
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)

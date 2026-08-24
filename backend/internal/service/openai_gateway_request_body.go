@@ -326,8 +326,8 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	normalized := []byte(`{}`)
-	// Keep the current Codex /compact schema while still dropping request-scoped
-	// fields such as prompt_cache_key, store, and stream.
+	// Keep the exact Codex CLI compact schema. Unlike a regular Responses request,
+	// compact has no store, stream, include, tool_choice, or client_metadata.
 	for _, field := range []string{
 		"model",
 		"input",
@@ -336,8 +336,8 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		"parallel_tool_calls",
 		"reasoning",
 		"service_tier",
+		"prompt_cache_key",
 		"text",
-		"previous_response_id",
 	} {
 		value := gjson.GetBytes(body, field)
 		if !value.Exists() {

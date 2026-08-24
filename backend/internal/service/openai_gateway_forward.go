@@ -671,6 +671,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		requestView = newOpenAIRequestView(body)
 		reqBody = nil
 	}
+	if account.IsOpenAIOAuth() {
+		schema := codexOAuthRequestSchemaResponses
+		switch {
+		case isCompactRequest:
+			schema = codexOAuthRequestSchemaCompact
+		case wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2:
+			schema = codexOAuthRequestSchemaWebSocketResponseCreate
+		}
+		if sanitizedBody, changed := sanitizeCodexOAuthJSONBodyForSchema(body, schema); changed {
+			body = sanitizedBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+		}
+	}
 	imageBillingModel := ""
 	imageSizeTier := ""
 	imageInputSize := ""

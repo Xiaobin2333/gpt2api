@@ -9,10 +9,48 @@ import (
 	"strings"
 )
 
+type codexOAuthRequestSchema uint8
+
+const (
+	codexOAuthRequestSchemaMetadataOnly codexOAuthRequestSchema = iota
+	codexOAuthRequestSchemaResponses
+	codexOAuthRequestSchemaWebSocketResponseCreate
+	codexOAuthRequestSchemaCompact
+)
+
+var codexOAuthResponsesTopLevelFields = map[string]struct{}{
+	"model": {}, "instructions": {}, "input": {}, "tools": {},
+	"tool_choice": {}, "parallel_tool_calls": {}, "reasoning": {},
+	"store": {}, "stream": {}, "stream_options": {}, "include": {},
+	"service_tier": {}, "prompt_cache_key": {}, "text": {},
+	"client_metadata": {},
+}
+
+var codexOAuthWebSocketResponseCreateTopLevelFields = func() map[string]struct{} {
+	fields := make(map[string]struct{}, len(codexOAuthResponsesTopLevelFields)+3)
+	for field := range codexOAuthResponsesTopLevelFields {
+		fields[field] = struct{}{}
+	}
+	fields["type"] = struct{}{}
+	fields["previous_response_id"] = struct{}{}
+	fields["generate"] = struct{}{}
+	return fields
+}()
+
+var codexOAuthCompactTopLevelFields = map[string]struct{}{
+	"model": {}, "input": {}, "instructions": {}, "tools": {},
+	"parallel_tool_calls": {}, "reasoning": {}, "service_tier": {},
+	"prompt_cache_key": {}, "text": {},
+}
+
 // sanitizeCodexOAuthJSONBody removes client-local routing, credential, and
 // location fields from an OpenAI OAuth request body. Callers are responsible
 // for applying the OAuth account gate before invoking this helper.
 func sanitizeCodexOAuthJSONBody(body []byte) ([]byte, bool) {
+	return sanitizeCodexOAuthJSONBodyForSchema(body, codexOAuthRequestSchemaMetadataOnly)
+}
+
+func sanitizeCodexOAuthJSONBodyForSchema(body []byte, schema codexOAuthRequestSchema) ([]byte, bool) {
 	if len(body) == 0 || !json.Valid(body) {
 		return body, false
 	}
@@ -27,7 +65,7 @@ func sanitizeCodexOAuthJSONBody(body []byte) ([]byte, bool) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return body, false
 	}
-	if !sanitizeCodexOAuthRequestMap(payload) {
+	if !sanitizeCodexOAuthRequestMapForSchema(payload, schema) {
 		return body, false
 	}
 	next, err := json.Marshal(payload)
@@ -35,6 +73,35 @@ func sanitizeCodexOAuthJSONBody(body []byte) ([]byte, bool) {
 		return body, false
 	}
 	return next, true
+}
+
+func sanitizeCodexOAuthRequestMapForSchema(payload map[string]any, schema codexOAuthRequestSchema) bool {
+	changed := sanitizeCodexOAuthRequestMap(payload)
+	allowed := codexOAuthTopLevelFieldsForSchema(schema)
+	if allowed == nil {
+		return changed
+	}
+	for key := range payload {
+		if _, ok := allowed[key]; ok {
+			continue
+		}
+		delete(payload, key)
+		changed = true
+	}
+	return changed
+}
+
+func codexOAuthTopLevelFieldsForSchema(schema codexOAuthRequestSchema) map[string]struct{} {
+	switch schema {
+	case codexOAuthRequestSchemaResponses:
+		return codexOAuthResponsesTopLevelFields
+	case codexOAuthRequestSchemaWebSocketResponseCreate:
+		return codexOAuthWebSocketResponseCreateTopLevelFields
+	case codexOAuthRequestSchemaCompact:
+		return codexOAuthCompactTopLevelFields
+	default:
+		return nil
+	}
 }
 
 // sanitizeCodexOAuthRequestMap is deliberately narrow: top-level transport

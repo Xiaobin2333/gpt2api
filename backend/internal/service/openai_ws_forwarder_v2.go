@@ -71,7 +71,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 	setOpenAIWSTurnMetadata(payload, turnMetadata)
 	if account.IsOpenAIOAuth() {
-		sanitizeCodexOAuthRequestMap(payload)
+		sanitizeCodexOAuthRequestMapForSchema(payload, codexOAuthRequestSchemaWebSocketResponseCreate)
 	}
 	applyStagedCodexFingerprintClientMetadata(c, account, payload)
 	previousResponseID := openAIWSPayloadString(payload, "previous_response_id")
