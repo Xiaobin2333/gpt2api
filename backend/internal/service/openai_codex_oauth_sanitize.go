@@ -88,6 +88,8 @@ var codexOAuthAllowedClientMetadataFields = map[string]struct{}{
 	"parent_turn_id":                     {},
 	"root_turn_id":                       {},
 	"x-codex-ws-stream-request-start-ms": {},
+	"ws_request_header_traceparent":      {},
+	"ws_request_header_tracestate":       {},
 	"ws_request_header_x_openai_internal_codex_responses_lite": {},
 }
 
@@ -121,6 +123,10 @@ func validCodexOAuthClientMetadataValue(key, value string) bool {
 	switch key {
 	case "ws_request_header_x_openai_internal_codex_responses_lite":
 		return value == "true"
+	case "ws_request_header_traceparent":
+		return validCodexW3CTraceparent(value)
+	case "ws_request_header_tracestate":
+		return validCodexW3CTracestate(value)
 	case "x-codex-ws-stream-request-start-ms":
 		if len(value) < 10 || len(value) > 16 {
 			return false
@@ -129,6 +135,33 @@ func validCodexOAuthClientMetadataValue(key, value string) bool {
 			if value[i] < '0' || value[i] > '9' {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func validCodexW3CTraceparent(value string) bool {
+	if len(value) != 55 || value[2] != '-' || value[35] != '-' || value[52] != '-' || value[:2] == "ff" {
+		return false
+	}
+	for i, character := range []byte(value) {
+		if i == 2 || i == 35 || i == 52 {
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return value[3:35] != strings.Repeat("0", 32) && value[36:52] != strings.Repeat("0", 16)
+}
+
+func validCodexW3CTracestate(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, character := range []byte(value) {
+		if character < 0x20 || character > 0x7e {
+			return false
 		}
 	}
 	return true
@@ -240,6 +273,7 @@ var codexOAuthAllowedTurnMetadataFields = map[string]struct{}{
 	"installation_id":                {},
 	"session_id":                     {},
 	"thread_id":                      {},
+	"agent_name":                     {},
 	"turn_id":                        {},
 	"window_id":                      {},
 	"request_kind":                   {},
@@ -276,6 +310,10 @@ func sanitizeCodexOAuthTurnMetadataMap(metadata map[string]any) bool {
 			delete(metadata, key)
 			changed = true
 			continue
+		}
+		if canonical == "agent_name" && value != "/root" {
+			metadata[key] = "/root"
+			changed = true
 		}
 		if valueChanged {
 			changed = true
@@ -319,6 +357,9 @@ func sanitizeCodexOAuthTurnMetadataValue(key string, value any) (valid bool, cha
 			}
 		}
 		return len(compaction) > 0, changed
+	case "request_kind":
+		text, ok := value.(string)
+		return ok && (text == "turn" || text == "prewarm" || text == "compaction" || text == "memory"), false
 	default:
 		text, ok := value.(string)
 		return ok && strings.TrimSpace(text) != "", false
@@ -363,7 +404,7 @@ func isBlockedCodexOAuthClientField(key string) bool {
 		"cwd", "pwd", "working_directory", "current_working_directory",
 		"workspace", "workspaces", "workspace_root", "worktree", "repository", "repo",
 		"git", "git_branch", "git_commit", "git_remote", "remote_url", "branch", "commit",
-		"terminal", "terminal_name", "shell", "shell_name", "agent_name",
+		"terminal", "terminal_name", "shell", "shell_name",
 		"plugin", "plugins", "skill", "skills", "mcp", "mcp_servers", "tool_namespaces_info",
 		"trace", "trace_id", "traceparent", "tracestate", "baggage":
 		return true

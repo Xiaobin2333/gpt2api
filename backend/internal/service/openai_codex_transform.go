@@ -200,6 +200,12 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			delete(reqBody, "stream")
 			result.Modified = true
 		}
+		// The unary /responses/compact payload has no client_metadata field;
+		// identity is carried by direct headers plus prompt_cache_key.
+		if _, ok := reqBody["client_metadata"]; ok {
+			delete(reqBody, "client_metadata")
+			result.Modified = true
+		}
 	} else {
 		// OAuth 走 ChatGPT internal API 时，store 必须为 false；显式 true 也会强制覆盖。
 		// 避免上游返回 "Store must be set to false"。

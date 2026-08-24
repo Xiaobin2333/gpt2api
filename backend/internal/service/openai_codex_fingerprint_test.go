@@ -472,10 +472,10 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, headerTurnID, bodyEmbeddedTurnID, "头和体内嵌 turn-metadata 的 turn_id 必须一致")
 	assert.Equal(t, ids.turnID, headerTurnID, "所有 turn_id 都应来自同一份 ids")
 	assert.NotContains(t, headerMeta, "turn_started_at_unix_ms")
-	assert.NotContains(t, bodyMeta, "turn_started_at_unix_ms")
+	assert.Equal(t, float64(ids.turnStartedAtUnixMs), bodyMeta["turn_started_at_unix_ms"])
 }
 
-func TestFingerprintIDs_MalformedEmbeddedMetadataIsPreserved(t *testing.T) {
+func TestFingerprintIDs_MalformedEmbeddedMetadataIsRebuilt(t *testing.T) {
 	account := newTestOAuthAccount(2, map[string]any{codexFingerprintModeExtraKey: "session"})
 	clientHeaders := make(http.Header)
 	clientHeaders.Set("session-id", "client-session-malformed")
@@ -499,7 +499,10 @@ func TestFingerprintIDs_MalformedEmbeddedMetadataIsPreserved(t *testing.T) {
 	require.True(t, ok)
 	bodyRaw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	require.True(t, ok)
-	require.Equal(t, "[malformed", bodyRaw)
+	var rebuilt map[string]any
+	require.NoError(t, json.Unmarshal([]byte(bodyRaw), &rebuilt))
+	require.Equal(t, ids.installationID, rebuilt["installation_id"])
+	require.Equal(t, ids.turnID, rebuilt["turn_id"])
 	require.Equal(t, ids.sessionID, clientMetadata["session_id"])
 }
 
@@ -756,19 +759,20 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 		wantRawString string
 	}{
 		{
-			name:        "missing key is not injected",
-			body:        []byte(`{"client_metadata":{"session_id":"body-session"}}`),
-			ids:         sessionIDs,
-			wantChanged: true,
-			wantExists:  false,
+			name:         "missing key is synthesized",
+			body:         []byte(`{"client_metadata":{"session_id":"body-session"}}`),
+			ids:          sessionIDs,
+			wantChanged:  true,
+			wantExists:   true,
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
-			name:         "empty key preserved",
+			name:         "empty key is synthesized",
 			body:         []byte(`{"prompt_cache_key":"","client_metadata":{"session_id":"body-session"}}`),
 			ids:          sessionIDs,
 			wantChanged:  true,
 			wantExists:   true,
-			wantCacheKey: "",
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
 			name:         "whitespace-different key is an explicit override",
@@ -779,36 +783,36 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 			wantCacheKey: " body-session ",
 		},
 		{
-			name:         "non-string key preserved",
+			name:         "non-string key is canonicalized",
 			body:         []byte(`{"prompt_cache_key":123,"client_metadata":{"session_id":"body-session"}}`),
 			ids:          sessionIDs,
 			wantChanged:  true,
 			wantExists:   true,
-			wantCacheKey: float64(123),
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
-			name:         "missing source metadata preserves key",
+			name:         "prompt key only carrier is canonicalized",
 			body:         []byte(`{"prompt_cache_key":"body-session"}`),
 			ids:          sessionIDs,
-			wantChanged:  false,
+			wantChanged:  true,
 			wantExists:   true,
-			wantCacheKey: "body-session",
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
-			name:         "non-string source session preserves key",
+			name:         "non-string source session is canonicalized",
 			body:         []byte(`{"prompt_cache_key":"123","client_metadata":{"session_id":123}}`),
 			ids:          sessionIDs,
 			wantChanged:  true,
 			wantExists:   true,
-			wantCacheKey: "123",
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
-			name:         "non-object source metadata preserves key",
+			name:         "non-object source metadata is replaced",
 			body:         []byte(`{"prompt_cache_key":"body-session","client_metadata":"bad"}`),
 			ids:          sessionIDs,
-			wantChanged:  false,
+			wantChanged:  true,
 			wantExists:   true,
-			wantCacheKey: "body-session",
+			wantCacheKey: sessionIDs.sessionID,
 		},
 		{
 			name:         "device mode preserves key",
@@ -887,16 +891,16 @@ func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *test
 	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"message","role":"user","content":"hi"}],"stream":true,"prompt_cache_key":"pck-1"}`)
 	out, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
-	require.False(t, changed)
-	require.Equal(t, body, out)
+	require.True(t, changed)
 
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(out, &decoded))
 	assert.Equal(t, "gpt-5.6-sol", decoded["model"])
-	assert.Equal(t, "pck-1", decoded["prompt_cache_key"])
+	assert.Equal(t, ids.sessionID, decoded["prompt_cache_key"])
 	assert.Equal(t, true, decoded["stream"])
-	_, exists := decoded["client_metadata"]
-	assert.False(t, exists)
+	clientMetadata, exists := decoded["client_metadata"].(map[string]any)
+	require.True(t, exists)
+	assert.Equal(t, ids.sessionID, clientMetadata["session_id"])
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_Noop(t *testing.T) {
@@ -997,11 +1001,11 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	require.NoError(t, err)
 
 	assert.Equal(t, ids.sessionID, req.Header.Get("session-id"), "session 模式下出站 session-id 应为账号级收敛值")
-	assert.Empty(t, req.Header.Get("thread-id"))
+	assert.Equal(t, ids.threadID, req.Header.Get("thread-id"))
 	assert.Empty(t, req.Header.Get("session_id"))
 	assert.Empty(t, req.Header.Get("x-codex-installation-id"), "普通 Responses 的 installation ID 仅位于 client_metadata")
-	assert.Empty(t, req.Header.Get("x-codex-window-id"))
-	assert.Empty(t, req.Header.Get("x-client-request-id"))
+	assert.Equal(t, ids.windowID, req.Header.Get("x-codex-window-id"))
+	assert.Equal(t, ids.threadID, req.Header.Get("x-client-request-id"))
 	turnMetadata := req.Header.Get("x-codex-turn-metadata")
 	require.NotEmpty(t, turnMetadata)
 	assert.Contains(t, turnMetadata, ids.sessionID, "turn-metadata JSON 中的 session_id 应被收敛")

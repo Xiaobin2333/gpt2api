@@ -1118,7 +1118,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Len(t, upstreamConn.writes, 1, "passthrough 模式应透传首条 response.create")
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultFullConvergesSessionAndTurnState(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultSessionConvergesSessionAndTurnState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -1163,9 +1163,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultFullConve
 			"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
 		},
 	}
-	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, nil)
+	expectedIDs := resolveCodexFingerprintIDs(account, "pcache_passthrough", account.GetCodexFingerprintMode())
 	require.NotNil(t, expectedIDs)
-	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
+	require.Equal(t, codexFingerprintSession, expectedIDs.mode)
 
 	serverErrCh := make(chan error, 1)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1253,8 +1253,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultFullConve
 	forwarded := requestToJSONString(upstreamConn.writes[0])
 	bodyTurnMetadata := gjson.Get(forwarded, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := captureDialer.lastHeaders.Get(openAIWSTurnMetadataHeader)
-	require.Empty(t, bodyTurnMetadata, forwarded)
-	require.Empty(t, headerTurnMetadata, "opaque non-JSON turn metadata must not cross the OAuth boundary")
+	require.NotEmpty(t, bodyTurnMetadata, forwarded)
+	require.Equal(t, expectedIDs.sessionID, gjson.Get(bodyTurnMetadata, "session_id").String())
+	require.NotEmpty(t, gjson.Get(bodyTurnMetadata, "turn_id").String())
+	require.JSONEq(t, bodyTurnMetadata, headerTurnMetadata,
+		"opaque input metadata must be replaced by the canonical compatibility snapshot")
 	require.False(t, gjson.Get(forwarded, `tools.#(type=="namespace")`).Exists())
 	require.Equal(t, "collaboration", gjson.Get(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.Get(forwarded, "tool_choice.type").String())

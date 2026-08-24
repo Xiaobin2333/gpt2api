@@ -488,22 +488,30 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		stageCodexFingerprintIDs(c, nil)
 		// 指纹收敛：一次性解析收敛 ID，请求体和出站头共享同一份 IDs（保证 turn_id 等随机字段一致）。
 		// fingerprintIDs 在此处解析，后续 buildUpstreamRequest 中使用同一份。
-		if !isCompactRequest {
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		fpIDs := resolveCodexFingerprintIDsForPayload(c, account, clientHeaders, body, clientPromptCacheKey)
+		if isCompactRequest {
+			if fpIDs != nil && fpIDs.sessionID != "" && decoded["prompt_cache_key"] != fpIDs.sessionID {
+				decoded["prompt_cache_key"] = fpIDs.sessionID
+				markDecodedModified()
 			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+		} else {
 			if fpIDs != nil {
 				if applyCodexFingerprintClientMetadata(decoded, fpIDs) {
 					markDecodedModified()
 				}
+				if compatMessagesBridge {
+					delete(decoded, "prompt_cache_key")
+				}
 			}
-			// 将 fpIDs 存入 gin context，供 buildUpstreamRequest 中头改写使用。
-			// 无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一
-			// 账号的 IDs 不得残留（stageCodexFingerprintIDs 注释）。
-			stageCodexFingerprintIDs(c, fpIDs)
 		}
+		// 将 fpIDs 存入 gin context，供 HTTP/compact/WS 请求头使用同一身份。
+		// 无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一
+		// 账号的 IDs 不得残留（stageCodexFingerprintIDs 注释）。
+		stageCodexFingerprintIDs(c, fpIDs)
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
@@ -1381,13 +1389,16 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		}
 		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, identityPromptCacheKey)
 		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		if !isOpenAIResponsesCompactPath(c) {
+			applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
+		}
 	}
 
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator 同源自洽）。
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
 	if account.UsesOpenAICodexProtocol() {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
-		// Codex 0.148.0 的 HTTP Responses 请求不协商旧实验标记；只移除该
+		// Codex 0.149.1 的 HTTP Responses 请求不协商旧实验标记；只移除该
 		// token，保留客户端显式请求的其他独立 beta。WebSocket 在握手处使用
 		// responses_websockets=2026-02-06，不经过这里。
 		stripOpenAILegacyResponsesBeta(req.Header)

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
@@ -10,12 +11,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // codexUpstreamMinVersion 是上游接受的最低 Codex 客户端版本，用于约束 UA 版本段
@@ -46,7 +49,7 @@ func buildCodexCLIUserAgent(version string) string {
 		return codexCLIUserAgent
 	}
 	return openai.CodexDefaultOriginator + "/" + version + codexCLIUserAgentSuffix +
-		" (" + openai.CodexDefaultOriginator + "; " + version + ")"
+		" (" + codexCLIClientName + "; " + version + ")"
 }
 
 // codexIdentityEnforcement 控制 enforceCodexIdentityHeaders 是否强制统一出站身份，
@@ -114,7 +117,9 @@ type codexOAuthRequestIdentity struct {
 	installationID string
 	sessionID      string
 	threadID       string
+	turnID         string
 	windowID       string
+	turnStartedAt  int64
 }
 
 func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.Header, body []byte, promptCacheKey string) codexOAuthRequestIdentity {
@@ -124,38 +129,14 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		inbound = c.Request.Header
 	}
 	if ids := stagedCodexFingerprintIDs(c, account); ids != nil {
-		if firstNonEmptyCodexIdentityValue(
-			gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String(),
-			h.Get("x-codex-installation-id"),
-			inbound.Get("x-codex-installation-id"),
-		) != "" {
-			identity.installationID = ids.installationID
-		}
-		if firstNonEmptyCodexIdentityValue(
-			promptCacheKey,
-			gjson.GetBytes(body, "client_metadata.session_id").String(),
-			h.Get("session-id"),
-			inbound.Get("session-id"),
-			inbound.Get("session_id"),
-			h.Get("session_id"),
-		) != "" {
-			identity.sessionID = ids.sessionID
-		}
-		if firstNonEmptyCodexIdentityValue(
-			gjson.GetBytes(body, "client_metadata.thread_id").String(),
-			h.Get("thread-id"),
-			inbound.Get("thread-id"),
-		) != "" {
-			identity.threadID = ids.threadID
-		}
-		if firstNonEmptyCodexIdentityValue(
-			gjson.GetBytes(body, "client_metadata.x-codex-window-id").String(),
-			h.Get("x-codex-window-id"),
-			inbound.Get("x-codex-window-id"),
-		) != "" {
-			identity.windowID = ids.windowID
-		}
+		identity.installationID = ids.installationID
+		identity.sessionID = ids.sessionID
+		identity.threadID = ids.threadID
+		identity.turnID = ids.turnID
+		identity.windowID = ids.windowID
+		identity.turnStartedAt = ids.turnStartedAtUnixMs
 	}
+	embeddedTurnMetadata := gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String()
 	if identity.installationID == "" {
 		identity.installationID = strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
 	}
@@ -168,6 +149,7 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.sessionID = firstNonEmptyCodexIdentityValue(
 			promptCacheKey,
 			gjson.GetBytes(body, "client_metadata.session_id").String(),
+			gjson.Get(embeddedTurnMetadata, "session_id").String(),
 			h.Get("session-id"),
 			inbound.Get("session-id"),
 			h.Get("session_id"),
@@ -177,16 +159,27 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 	if identity.threadID == "" {
 		identity.threadID = firstNonEmptyCodexIdentityValue(
 			gjson.GetBytes(body, "client_metadata.thread_id").String(),
+			gjson.Get(embeddedTurnMetadata, "thread_id").String(),
 			h.Get("thread-id"),
 			inbound.Get("thread-id"),
+		)
+	}
+	if identity.turnID == "" {
+		identity.turnID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.turn_id").String(),
+			gjson.Get(embeddedTurnMetadata, "turn_id").String(),
 		)
 	}
 	if identity.windowID == "" {
 		identity.windowID = firstNonEmptyCodexIdentityValue(
 			gjson.GetBytes(body, "client_metadata.x-codex-window-id").String(),
+			gjson.Get(embeddedTurnMetadata, "window_id").String(),
 			h.Get("x-codex-window-id"),
 			inbound.Get("x-codex-window-id"),
 		)
+	}
+	if identity.turnStartedAt == 0 {
+		identity.turnStartedAt = gjson.Get(embeddedTurnMetadata, "turn_started_at_unix_ms").Int()
 	}
 	return identity
 }
@@ -248,19 +241,69 @@ func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthReq
 			h.Del("x-codex-installation-id")
 		}
 		h.Del("x-client-request-id")
+		applyCodexOAuthIdentityTurnMetadataHeader(h, identity, true)
 		return
 	}
 	// Normal HTTP and WebSocket requests carry installation identity in
 	// client_metadata. The legacy unary compact endpoint is the only current
 	// Codex request that carries it as a direct header.
 	h.Del("x-codex-installation-id")
+	if identity.threadID != "" {
+		h.Set("x-client-request-id", identity.threadID)
+	}
+	applyCodexOAuthIdentityTurnMetadataHeader(h, identity, false)
+}
+
+func applyCodexOAuthIdentityTurnMetadataHeader(h http.Header, identity codexOAuthRequestIdentity, compact bool) {
+	if h == nil || identity.sessionID == "" || identity.threadID == "" || identity.turnID == "" {
+		return
+	}
+	metadata := make(map[string]any, 12)
+	if raw := strings.TrimSpace(h.Get(openAIWSTurnMetadataHeader)); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &metadata)
+		if metadata == nil {
+			metadata = make(map[string]any, 12)
+		}
+	}
+	metadata["installation_id"] = identity.installationID
+	metadata["session_id"] = identity.sessionID
+	metadata["thread_id"] = identity.threadID
+	metadata["agent_name"] = "/root"
+	metadata["turn_id"] = identity.turnID
+	metadata["window_id"] = identity.windowID
+	if identity.turnStartedAt > 0 {
+		metadata["turn_started_at_unix_ms"] = identity.turnStartedAt
+	}
+	if compact {
+		metadata["request_kind"] = "compaction"
+		if _, ok := metadata["compaction"]; !ok {
+			metadata["compaction"] = map[string]any{
+				"trigger":        "manual",
+				"reason":         "manual",
+				"implementation": "responses_compact",
+				"phase":          "standalone_turn",
+				"strategy":       "memento",
+			}
+		}
+	} else {
+		metadata["request_kind"] = "turn"
+	}
+	if encoded, err := marshalCodexTurnMetadata(metadata); err == nil {
+		h.Set(openAIWSTurnMetadataHeader, encoded)
+	}
 }
 
 func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body []byte, promptCacheKey string) ([]byte, error) {
+	return normalizeCodexOAuthRequestMetadataWithIDs(c, account, body, promptCacheKey, nil)
+}
+
+func normalizeCodexOAuthRequestMetadataWithIDs(c *gin.Context, account *Account, body []byte, promptCacheKey string, ids *codexFingerprintIDs) ([]byte, error) {
 	if account == nil || !account.IsOpenAIOAuth() || len(body) == 0 || !gjson.ValidBytes(body) {
 		return body, nil
 	}
-	ids := stagedCodexFingerprintIDs(c, account)
+	if ids == nil {
+		ids = stagedCodexFingerprintIDs(c, account)
+	}
 	if ids == nil {
 		var headers http.Header
 		if c != nil && c.Request != nil {
@@ -269,7 +312,16 @@ func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body [
 		ids = resolveCodexFingerprintIDsFromRequest(account, headers)
 	}
 	next, _, err := applyCodexFingerprintClientMetadataRaw(body, ids)
-	return next, err
+	if err != nil {
+		return body, err
+	}
+	if ids != nil && !gjson.GetBytes(next, "client_metadata.x-codex-ws-stream-request-start-ms").Exists() {
+		next, err = sjson.SetBytes(next, "client_metadata.x-codex-ws-stream-request-start-ms", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		if err != nil {
+			return body, fmt.Errorf("synthesize websocket request start metadata: %w", err)
+		}
+	}
+	return next, nil
 }
 
 func applyCodexOAuthTurnMetadataCompatibilityHeader(h http.Header, body []byte) {

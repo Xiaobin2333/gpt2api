@@ -790,11 +790,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		} else if changed {
 			firstClientMessage = converged
 		}
-		normalized, metadataErr := normalizeCodexOAuthRequestMetadata(
+		normalized, metadataErr := normalizeCodexOAuthRequestMetadataWithIDs(
 			c,
 			account,
 			firstClientMessage,
 			gjson.GetBytes(firstClientMessage, "prompt_cache_key").String(),
+			fpIDs,
 		)
 		if metadataErr != nil {
 			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
@@ -1108,11 +1109,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					} else if changed {
 						out = converged
 					}
-					normalized, metadataErr := normalizeCodexOAuthRequestMetadata(
+					normalized, metadataErr := normalizeCodexOAuthRequestMetadataWithIDs(
 						c,
 						account,
 						out,
 						gjson.GetBytes(out, "prompt_cache_key").String(),
+						fpIDs,
 					)
 					if metadataErr != nil {
 						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)

@@ -8,7 +8,7 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-func TestCodexHTTPProfileMatchesCLI0148Capture(t *testing.T) {
+func TestCodexHTTPProfileMatchesCLI01491Capture(t *testing.T) {
 	profile := CodexHTTPProfile()
 	spec := buildClientHelloSpecFromProfile(profile)
 
@@ -31,7 +31,7 @@ func TestCodexHTTPProfileMatchesCLI0148Capture(t *testing.T) {
 	assertNoALPN(t, spec.Extensions)
 }
 
-func TestCodexWebSocketProfileMatchesCLI0148CaptureAndRandomizesExtensions(t *testing.T) {
+func TestCodexWebSocketProfileMatchesCLI01491CaptureAndRandomizesExtensions(t *testing.T) {
 	profile := CodexWebSocketProfile()
 	wantCiphers := []uint16{0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b, 0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff}
 	wantCurves := []uint16{0x11ec, 0x001d, 0x0017, 0x0018}
@@ -97,7 +97,7 @@ func assertNoALPN(t *testing.T, extensions []utls.TLSExtension) {
 	t.Helper()
 	for _, extension := range extensions {
 		if _, ok := extension.(*utls.ALPNExtension); ok {
-			t.Fatal("Codex 0.148.0 capture did not advertise ALPN")
+			t.Fatal("Codex 0.149.1 capture did not advertise ALPN")
 		}
 	}
 }

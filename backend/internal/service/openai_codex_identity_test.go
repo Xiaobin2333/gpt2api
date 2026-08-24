@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -31,7 +32,7 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 
 		require.Equal(t, identity.sessionID, h.Get("session-id"))
 		require.Equal(t, identity.threadID, h.Get("thread-id"))
-		require.Empty(t, h.Get("x-client-request-id"))
+		require.Equal(t, identity.threadID, h.Get("x-client-request-id"))
 		require.Equal(t, identity.windowID, h.Get("x-codex-window-id"))
 		require.Empty(t, h.Get("session_id"))
 		require.Empty(t, h.Get("conversation_id"))
@@ -52,6 +53,71 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 		require.Equal(t, identity.installationID, h.Get("x-codex-installation-id"))
 		require.Empty(t, h.Get("x-client-request-id"))
 	})
+}
+
+func TestCodexOAuth01491SynthesizesOfficialResponsesIdentity(t *testing.T) {
+	t.Cleanup(func() { SetCodexFingerprintDeploymentSalt("") })
+	SetCodexFingerprintDeploymentSalt(strings.Repeat("a", 32))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	account := &Account{
+		ID:       1491,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintSession),
+			codexFingerprintSeedExtraKey: "019c8c36-4adf-7a04-82b3-bd93a6ed8be0",
+		},
+	}
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"downstream-conversation","stream":true,"input":[]}`)
+	ids := resolveCodexFingerprintIDsForPayload(c, account, c.Request.Header, body, "downstream-conversation")
+	require.NotNil(t, ids)
+	stageCodexFingerprintIDs(c, ids)
+
+	normalized, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, ids.sessionID, gjson.GetBytes(normalized, "prompt_cache_key").String())
+	require.Equal(t, ids.installationID, gjson.GetBytes(normalized, "client_metadata.x-codex-installation-id").String())
+	require.Equal(t, ids.sessionID, gjson.GetBytes(normalized, "client_metadata.session_id").String())
+	require.Equal(t, ids.threadID, gjson.GetBytes(normalized, "client_metadata.thread_id").String())
+	require.Equal(t, ids.turnID, gjson.GetBytes(normalized, "client_metadata.turn_id").String())
+	require.Equal(t, ids.windowID, gjson.GetBytes(normalized, "client_metadata.x-codex-window-id").String())
+
+	for _, value := range []string{ids.sessionID, ids.threadID, ids.turnID} {
+		parsed, parseErr := uuid.Parse(value)
+		require.NoError(t, parseErr)
+		require.Equal(t, uuid.Version(7), parsed.Version())
+	}
+	require.Equal(t, ids.sessionID, ids.threadID)
+
+	turnMetadata := gjson.Parse(gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String())
+	require.Equal(t, ids.installationID, turnMetadata.Get("installation_id").String())
+	require.Equal(t, ids.sessionID, turnMetadata.Get("session_id").String())
+	require.Equal(t, ids.threadID, turnMetadata.Get("thread_id").String())
+	require.Equal(t, "/root", turnMetadata.Get("agent_name").String())
+	require.Equal(t, ids.turnID, turnMetadata.Get("turn_id").String())
+	require.Equal(t, "turn", turnMetadata.Get("request_kind").String())
+	require.Positive(t, turnMetadata.Get("turn_started_at_unix_ms").Int())
+
+	headers := make(http.Header)
+	identity := resolveCodexOAuthRequestIdentity(c, account, headers, normalized, ids.sessionID)
+	applyCodexOAuthRequestIdentityHeaders(headers, identity, false)
+	applyCodexOAuthTurnMetadataCompatibilityHeader(headers, normalized)
+	require.Equal(t, ids.sessionID, headers.Get("session-id"))
+	require.Equal(t, ids.threadID, headers.Get("thread-id"))
+	require.Equal(t, ids.threadID, headers.Get("x-client-request-id"))
+	require.Equal(t, ids.windowID, headers.Get("x-codex-window-id"))
+	require.Empty(t, headers.Get("x-codex-installation-id"))
+	require.Equal(t, ids.turnID, gjson.Get(headers.Get(openAIWSTurnMetadataHeader), "turn_id").String())
+}
+
+func TestCodexCLI01491CanonicalIdentity(t *testing.T) {
+	require.Equal(t, "codex_cli_rs", openai.CodexDefaultOriginator)
+	require.Equal(t,
+		"codex_cli_rs/0.149.1 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.149.1)",
+		codexCLIUserAgent,
+	)
 }
 
 func TestResolveCodexOAuthRequestIdentityPreservesExistingValues(t *testing.T) {
@@ -203,6 +269,37 @@ func TestDeviceConvergencePreservesOfficialSessionLifecycle(t *testing.T) {
 	require.Equal(t, threadID, metadata.Get("thread_id").String())
 	require.Equal(t, turnID, metadata.Get("turn_id").String())
 	require.Equal(t, windowID, metadata.Get("window_id").String())
+}
+
+func TestNormalizeCodexOAuthRequestMetadataUsesCurrentWSTurnIdentity(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	account := &Account{
+		ID:       9,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintSession),
+			codexFingerprintSeedExtraKey: "f4e092dc-3aba-4c1f-bbae-4700123f63ef",
+		},
+	}
+	initial := resolveCodexFingerprintIDs(account, "client-session", codexFingerprintSession)
+	require.NotNil(t, initial)
+	stageCodexFingerprintIDs(c, initial)
+	followUp := resolveCodexFingerprintIDsForWSTurn(c, account, 2)
+	require.NotNil(t, followUp)
+	require.NotEqual(t, initial.turnID, followUp.turnID)
+
+	body := []byte(`{"model":"gpt-5.6-sol","client_metadata":{},"input":[]}`)
+	normalized, err := normalizeCodexOAuthRequestMetadataWithIDs(c, account, body, "", followUp)
+	require.NoError(t, err)
+	require.Equal(t, initial.sessionID, gjson.GetBytes(normalized, "client_metadata.session_id").String())
+	require.Equal(t, initial.threadID, gjson.GetBytes(normalized, "client_metadata.thread_id").String())
+	require.Equal(t, followUp.turnID, gjson.GetBytes(normalized, "client_metadata.turn_id").String())
+	require.Equal(t, followUp.turnID, gjson.Get(
+		gjson.GetBytes(normalized, "client_metadata.x-codex-turn-metadata").String(),
+		"turn_id",
+	).String())
 }
 
 func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {
@@ -527,7 +624,7 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 }
 
 func TestBuildCodexCLIUserAgent(t *testing.T) {
-	require.Equal(t, openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix+" ("+openai.CodexDefaultOriginator+"; 0.200.1)", buildCodexCLIUserAgent("0.200.1"))
+	require.Equal(t, openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix+" ("+codexCLIClientName+"; 0.200.1)", buildCodexCLIUserAgent("0.200.1"))
 	// 非法版本号必须回退到内置 UA，不能拼出畸形身份。
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent("bogus version"))
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent(""))

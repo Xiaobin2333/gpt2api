@@ -1190,6 +1190,14 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	}
 
 	if compact {
+		if clientMetadata := gjson.GetBytes(normalized, "client_metadata"); clientMetadata.Exists() {
+			next, err := sjson.DeleteBytes(normalized, "client_metadata")
+			if err != nil {
+				return body, false, fmt.Errorf("normalize passthrough body delete compact client_metadata: %w", err)
+			}
+			normalized = next
+			changed = true
+		}
 		if store := gjson.GetBytes(normalized, "store"); store.Exists() {
 			next, err := sjson.DeleteBytes(normalized, "store")
 			if err != nil {

@@ -253,7 +253,7 @@ func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t 
 	}
 	require.Len(t, upstream.bodies, 3)
 	firstFingerprint := resolveCodexFingerprintIDsFromRequest(account, nil)
-	replacementFingerprint := resolveCodexFingerprintIDsFromRequest(&nextAccount, nil)
+	replacementFingerprint := resolveCodexFingerprintIDs(&nextAccount, "client-session", nextAccount.GetCodexFingerprintMode())
 	require.NotNil(t, firstFingerprint)
 	require.NotNil(t, replacementFingerprint)
 	require.NotEqual(t, firstFingerprint.sessionID, replacementFingerprint.sessionID)

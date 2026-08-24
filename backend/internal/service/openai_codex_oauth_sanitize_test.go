@@ -78,7 +78,7 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 	require.Equal(t, "memento", gjson.Get(turnMetadata, "compaction.strategy").String())
 	require.False(t, gjson.Get(turnMetadata, "compaction.private").Exists())
 	require.False(t, gjson.Get(turnMetadata, "future_unique").Exists())
-	require.False(t, gjson.Get(turnMetadata, "agent_name").Exists())
+	require.Equal(t, "/root", gjson.Get(turnMetadata, "agent_name").String())
 	require.False(t, gjson.Get(turnMetadata, "tool_namespaces_info").Exists())
 	require.False(t, gjson.Get(turnMetadata, "base_url").Exists())
 	require.False(t, gjson.Get(turnMetadata, "region").Exists())
@@ -158,6 +158,27 @@ func TestSanitizeCodexOAuthJSONBodyValidatesOfficialWSMetadataValues(t *testing.
 	require.Equal(t, "state", gjson.GetBytes(got, "client_metadata.x-codex-turn-state").String())
 	require.False(t, gjson.GetBytes(got, "client_metadata.x-codex-ws-stream-request-start-ms").Exists())
 	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").Exists())
+}
+
+func TestSanitizeCodexOAuthJSONBodyPreservesValidated01491WSTraceMetadata(t *testing.T) {
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	body := []byte(`{"model":"gpt-5.4","client_metadata":{"ws_request_header_traceparent":"` + traceparent + `","ws_request_header_tracestate":"vendor=value"}}`)
+
+	got, changed := sanitizeCodexOAuthJSONBody(body)
+	require.False(t, changed)
+	require.Equal(t, traceparent, gjson.GetBytes(got, "client_metadata.ws_request_header_traceparent").String())
+	require.Equal(t, "vendor=value", gjson.GetBytes(got, "client_metadata.ws_request_header_tracestate").String())
+
+	invalid := []byte(`{"model":"gpt-5.4","client_metadata":{"ws_request_header_traceparent":"00-private","ws_request_header_tracestate":"bad\nvalue"}}`)
+	got, changed = sanitizeCodexOAuthJSONBody(invalid)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_traceparent").Exists())
+	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_tracestate").Exists())
+}
+
+func TestCodex01491TUIStripsUnavailableAttestationHeader(t *testing.T) {
+	require.False(t, openaiAllowedHeaders["x-oai-attestation"])
+	require.False(t, openaiPassthroughAllowedHeaders["x-oai-attestation"])
 }
 
 func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {

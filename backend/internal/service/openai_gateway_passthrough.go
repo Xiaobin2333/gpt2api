@@ -193,12 +193,20 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 一次性解析收敛 ID：请求体 client_metadata 在此改写（raw 字节外科
 		// 手术，透传热路径禁全量 Unmarshal），出站头改写由请求构造器读取
 		// context 中的同一份 IDs 完成（turn_id 等随机字段两侧必须一致）。
-		if !isOpenAIResponsesCompactPath(c) {
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		fpIDs := resolveCodexFingerprintIDsForPayload(c, account, clientHeaders, body, gjson.GetBytes(body, "prompt_cache_key").String())
+		if isOpenAIResponsesCompactPath(c) {
+			if fpIDs != nil && fpIDs.sessionID != "" && gjson.GetBytes(body, "prompt_cache_key").String() != fpIDs.sessionID {
+				compactBody, compactErr := sjson.SetBytes(body, "prompt_cache_key", fpIDs.sessionID)
+				if compactErr != nil {
+					return nil, fmt.Errorf("normalize compact prompt_cache_key: %w", compactErr)
+				}
+				body = compactBody
 			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+		} else {
 			if fpIDs != nil {
 				fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
 				if fpErr != nil {
@@ -208,8 +216,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					body = fpBody
 				}
 			}
-			stageCodexFingerprintIDs(c, fpIDs)
 		}
+		stageCodexFingerprintIDs(c, fpIDs)
 	}
 	if account != nil && account.IsOpenAI() {
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, account)
@@ -687,6 +695,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
 		identity := resolveCodexOAuthRequestIdentity(c, account, req.Header, body, gjson.GetBytes(body, "prompt_cache_key").String())
 		applyCodexOAuthRequestIdentityHeaders(req.Header, identity, isOpenAIResponsesCompactPath(c))
+		if !isOpenAIResponsesCompactPath(c) {
+			applyCodexOAuthTurnMetadataCompatibilityHeader(req.Header, body)
+		}
 	}
 	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
 	// （User-Agent / originator 同源自洽），客户端自报身份不会到达上游。

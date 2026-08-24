@@ -467,7 +467,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModePreservesNamespacedC
 	require.Equal(t, "client-window", headers.Get("x-codex-window-id"))
 	require.Equal(t, "client-session", headers.Get("session-id"))
 	require.Equal(t, "client-thread", headers.Get("thread-id"))
-	require.Equal(t, "client-request", headers.Get("x-client-request-id"))
+	require.Equal(t, "client-thread", headers.Get("x-client-request-id"))
 }
 
 func TestLogOpenAIWSBindResponseAccountWarn(t *testing.T) {
@@ -783,7 +783,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 	}
 	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
 	require.NotNil(t, expectedIDs)
-	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
+	require.Equal(t, codexFingerprintSession, expectedIDs.mode)
 
 	body := []byte(`{"model":"gpt-5.1","stream":false,"store":true,"input":[{"type":"input_text","text":"hello","namespace":"native-wsv2"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
@@ -967,7 +967,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthHonorsAccountUserAgent(t *testin
 	require.Empty(t, captureDialer.lastHeaders.Get("version"))
 }
 
-func TestOpenAIGatewayService_Forward_WSv2_DefaultFullOverridesPromptCacheSession(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2_DefaultSessionConvergesPromptCacheSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1018,9 +1018,9 @@ func TestOpenAIGatewayService_Forward_WSv2_DefaultFullOverridesPromptCacheSessio
 			"responses_websockets_v2_enabled": true,
 		},
 	}
-	expectedIDs := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
+	expectedIDs := resolveCodexFingerprintIDs(account, "pcache_123", account.GetCodexFingerprintMode())
 	require.NotNil(t, expectedIDs)
-	require.Equal(t, codexFingerprintFull, expectedIDs.mode)
+	require.Equal(t, codexFingerprintSession, expectedIDs.mode)
 
 	body := []byte(`{"model":"gpt-5.1","stream":true,"prompt_cache_key":"pcache_123","input":[{"type":"input_text","text":"hi"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
@@ -1103,15 +1103,15 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	require.Empty(t, captureDialer.lastHeaders.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
 	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
-	require.Empty(t, captureDialer.lastHeaders.Get("thread-id"))
-	require.Empty(t, captureDialer.lastHeaders.Get("x-client-request-id"))
-	require.Empty(t, captureDialer.lastHeaders.Get("x-codex-window-id"))
+	require.Equal(t, wantThread, captureDialer.lastHeaders.Get("thread-id"))
+	require.Equal(t, wantThread, captureDialer.lastHeaders.Get("x-client-request-id"))
+	require.Equal(t, wantWindow, captureDialer.lastHeaders.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.Get(payloadJSON, "prompt_cache_key").String())
-	require.False(t, gjson.Get(payloadJSON, "client_metadata.x-codex-installation-id").Exists())
+	require.Equal(t, wantInstall, gjson.Get(payloadJSON, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.Get(payloadJSON, "client_metadata.session_id").String())
-	require.False(t, gjson.Get(payloadJSON, "client_metadata.thread_id").Exists())
-	require.False(t, gjson.Get(payloadJSON, "client_metadata.x-codex-window-id").Exists())
+	require.Equal(t, wantThread, gjson.Get(payloadJSON, "client_metadata.thread_id").String())
+	require.Equal(t, wantWindow, gjson.Get(payloadJSON, "client_metadata.x-codex-window-id").String())
 
 	bodyTurnMetadata := gjson.Get(payloadJSON, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := captureDialer.lastHeaders.Get("x-codex-turn-metadata")
@@ -1121,8 +1121,8 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	require.Equal(t, wantWindow, gjson.Get(bodyTurnMetadata, "window_id").String())
 	require.Equal(t, wantSession, gjson.Get(headerTurnMetadata, "session_id").String())
 	require.Equal(t, gjson.Get(bodyTurnMetadata, "turn_id").String(), gjson.Get(headerTurnMetadata, "turn_id").String())
-	require.False(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Exists())
-	require.False(t, gjson.Get(headerTurnMetadata, "turn_started_at_unix_ms").Exists())
+	require.Positive(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int())
+	require.Positive(t, gjson.Get(headerTurnMetadata, "turn_started_at_unix_ms").Int())
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_ResponseDoneUsageParsed(t *testing.T) {

@@ -73,7 +73,7 @@ func TestFetchCodexModelsManifestOAuthUsesCodexTLSProfile(t *testing.T) {
 	svc := &OpenAIGatewayService{httpUpstream: upstream}
 
 	manifest, err := svc.fetchCodexModelsManifestUpstream(context.Background(), codexModelsManifestRequest{
-		url:                "https://chatgpt.com/backend-api/codex/models?client_version=0.148.0",
+		url:                "https://chatgpt.com/backend-api/codex/models?client_version=0.149.1",
 		headers:            http.Header{"User-Agent": {codexCLIUserAgent}},
 		proxyURL:           "proxy",
 		accountID:          42,
@@ -83,7 +83,7 @@ func TestFetchCodexModelsManifestOAuthUsesCodexTLSProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"models":[]}`, string(manifest.Body))
 	require.NotNil(t, upstream.lastTLSProfile)
-	require.Equal(t, "codex-cli-0.148.0-http", upstream.lastTLSProfile.Name)
+	require.Equal(t, "codex-cli-0.149.1-http", upstream.lastTLSProfile.Name)
 }
 
 func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
