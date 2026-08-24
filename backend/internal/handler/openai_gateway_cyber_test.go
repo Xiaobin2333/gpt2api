@@ -139,7 +139,7 @@ func TestRejectIfCyberSessionBlocked_FailOpen(t *testing.T) {
 	require.False(t, h2.rejectIfCyberSessionBlocked(c, key, []byte(`{}`), "gpt-5", cyberBlockFormatResponses), "nil gateway service → pass")
 }
 
-func TestBuildCyberSessionBlockWritePlanCombinesExplicitAndTranscriptKeys(t *testing.T) {
+func TestBuildCyberSessionBlockWritePlanRequiresExplicitSession(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"},{"role":"user","content":"trigger"}]}`)
 	c := newTestGinContext()
 	c.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(string(body)))
@@ -147,13 +147,50 @@ func TestBuildCyberSessionBlockWritePlanCombinesExplicitAndTranscriptKeys(t *tes
 	c.Request.Header.Set("User-Agent", "client/1.2.3")
 
 	plan := buildCyberSessionBlockWritePlan(7, c, body)
-	require.Len(t, plan.keys, 2)
-	require.NotEmpty(t, plan.scopeKey)
+	require.Empty(t, plan.keys)
 
 	c.Request.Header.Set("session_id", "sess-explicit")
 	plan = buildCyberSessionBlockWritePlan(7, c, body)
-	require.Len(t, plan.keys, 3)
-	require.NotEmpty(t, plan.scopeKey)
+	require.Len(t, plan.keys, 1)
+}
+
+func TestCyberSessionBlockSkipsCompactionRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "legacy compact path",
+			path: "/openai/v1/responses/compact",
+			body: `{"prompt_cache_key":"session-a","input":[{"role":"user","content":"history"}]}`,
+		},
+		{
+			name: "native remote compaction",
+			path: "/openai/v1/responses",
+			body: `{"model":"gpt-5.6-sol","stream":true,"prompt_cache_key":"session-a","input":[{"role":"user","content":"history"},{"type":"compaction_trigger"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(tt.body)
+			c := newTestGinContext()
+			c.Request = httptest.NewRequest("POST", tt.path, strings.NewReader(tt.body))
+
+			require.False(t, cyberSessionBlockEligible(c, body))
+			require.Empty(t, buildCyberSessionBlockWritePlan(7, c, body).keys)
+		})
+	}
+
+	t.Run("compaction-shaped messages request remains eligible", func(t *testing.T) {
+		body := []byte(`{"stream":true,"prompt_cache_key":"session-a","input":[{"type":"compaction_trigger"}]}`)
+		c := newTestGinContext()
+		c.Request = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(string(body)))
+
+		require.True(t, cyberSessionBlockEligible(c, body))
+		require.Len(t, buildCyberSessionBlockWritePlan(7, c, body).keys, 1)
+	})
 }
 
 // TestRecordCyberPolicyIfMarked_BlockKeyPlumbed verifies the 6th param is

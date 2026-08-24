@@ -21,17 +21,14 @@ type CyberSessionBlockStore interface {
 	FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error)
 }
 
-const cyberSessionTranscriptLookupOverflowBlockKey = "transcript_lookup_limit_exceeded"
-
 // CyberSessionExplicitBlockKey returns an inexpensive exact key when the
 // client supplies a stable session signal.
 func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) string {
 	return hashCyberSessionBlockKey(apiKeyID, explicitOpenAISessionID(c, body))
 }
 
-// CyberSessionTranscriptBlockKeys returns the exact full-request key followed
-// by an optional rewrite-tolerant context key. The latter is emitted only after
-// model-generated history has been observed.
+// CyberSessionTranscriptBlockKeys is retained for repository compatibility and
+// diagnostics. Production blocking no longer uses transcript-derived identity.
 func CyberSessionTranscriptBlockKeys(apiKeyID int64, body []byte) []string {
 	derived := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
 	if len(derived.lookupKeys) == 0 {
@@ -48,8 +45,8 @@ func CyberSessionTranscriptLookupKeys(apiKeyID int64, body []byte) []string {
 	return deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body).lookupKeys
 }
 
-// CyberSessionScopeKey is a coarse, non-blocking fingerprint used only to
-// avoid transcript parsing and MGET for sources that never produced a hit.
+// CyberSessionScopeKey is retained for repository compatibility while legacy
+// scope records expire. Production blocking no longer reads or writes it.
 func CyberSessionScopeKey(apiKeyID int64, clientIP, userAgent string) string {
 	if apiKeyID <= 0 {
 		return ""
@@ -95,9 +92,9 @@ func (s *OpenAIGatewayService) CyberSessionBlockRuntime(ctx context.Context) (bo
 	return s.settingService.GetCyberSessionBlockRuntime(ctx)
 }
 
-// MarkCyberSessionBlocked 把会话写入屏蔽表（写入点：cyber 命中后）。
+// MarkCyberSessionBlocked 把显式会话写入屏蔽表（写入点：cyber 命中后）。
 // 开关关闭、key 为空或存储不可用时静默跳过。
-func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scopeKey string, keys []string) {
+func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, keys []string) {
 	if s == nil || len(keys) == 0 {
 		return
 	}
@@ -109,14 +106,15 @@ func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scop
 	if store == nil {
 		return
 	}
-	if err := store.SetCyberSessionBlocked(ctx, scopeKey, keys, ttl); err != nil {
+	if err := store.SetCyberSessionBlocked(ctx, "", keys, ttl); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "cyber session block write failed: err=%v", err)
 	}
 }
 
-// FindCyberSessionBlockedForRequest applies explicit-first lookup followed by
-// scope-gated transcript matching. All failures remain fail-open.
-func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
+// FindCyberSessionBlockedForRequest only enforces blocks backed by a stable,
+// explicit session signal. API key, IP, User-Agent, and transcript similarity
+// cannot safely identify a session when credentials or networks are shared.
+func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte) string {
 	enabled, _ := s.CyberSessionBlockRuntime(ctx)
 	if !enabled {
 		return ""
@@ -125,38 +123,13 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	if store == nil {
 		return ""
 	}
-	if explicitKey := CyberSessionExplicitBlockKey(apiKeyID, c, body); explicitKey != "" {
-		key, err := store.FindCyberSessionBlocked(ctx, []string{explicitKey})
-		if err != nil {
-			logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
-			return ""
-		}
-		if key != "" {
-			return key
-		}
+	explicitKey := CyberSessionExplicitBlockKey(apiKeyID, c, body)
+	if explicitKey == "" {
+		return ""
 	}
-	scopeKey := CyberSessionScopeKey(apiKeyID, clientIP, userAgent)
-	active, err := store.IsCyberSessionScopeActive(ctx, scopeKey)
+	key, err := store.FindCyberSessionBlocked(ctx, []string{explicitKey})
 	if err != nil {
-		logger.LegacyPrintf("service.openai_gateway", "cyber session scope read failed: err=%v", err)
-		return ""
-	}
-	if !active {
-		return ""
-	}
-	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
-	if transcript.lookupKeysTruncated {
-		// Once the coarse scope is active, silently dropping old candidates would
-		// let a blocked client evade prefix matching by appending dummy items.
-		return cyberSessionTranscriptLookupOverflowBlockKey
-	}
-	keys := transcript.lookupKeys
-	if len(keys) == 0 {
-		return ""
-	}
-	key, err := store.FindCyberSessionBlocked(ctx, keys)
-	if err != nil {
-		logger.LegacyPrintf("service.openai_gateway", "cyber session block batch read failed: err=%v", err)
+		logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
 		return ""
 	}
 	return key
