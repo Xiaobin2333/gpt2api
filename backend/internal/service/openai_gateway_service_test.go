@@ -345,37 +345,52 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 
 	bodyWithKey := []byte(`{"prompt_cache_key":"ses_aaa"}`)
 
-	// 1) session_id header wins
+	// 1) official Codex session-id header wins
+	c.Request.Header.Set("session-id", "codex-session-123")
+	c.Request.Header.Set("thread-id", "codex-thread-456")
 	c.Request.Header.Set("session_id", "sess-123")
 	c.Request.Header.Set("conversation_id", "conv-456")
 	h1 := svc.GenerateSessionHash(c, bodyWithKey)
 	if h1 == "" {
 		t.Fatalf("expected non-empty hash")
 	}
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("codex-session-123")), h1)
 
-	// 2) conversation_id used when session_id absent
-	c.Request.Header.Del("session_id")
+	// 2) official thread-id is the fallback when session-id is absent
+	c.Request.Header.Del("session-id")
 	h2 := svc.GenerateSessionHash(c, bodyWithKey)
-	if h2 == "" {
-		t.Fatalf("expected non-empty hash")
-	}
-	if h1 == h2 {
-		t.Fatalf("expected different hashes for different keys")
-	}
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("codex-thread-456")), h2)
+	require.NotEqual(t, h1, h2)
 
-	// 3) prompt_cache_key used when both headers absent
-	c.Request.Header.Del("conversation_id")
+	// 3) legacy session_id is used when official headers are absent
+	c.Request.Header.Del("thread-id")
 	h3 := svc.GenerateSessionHash(c, bodyWithKey)
-	if h3 == "" {
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("sess-123")), h3)
+	require.NotEqual(t, h2, h3)
+
+	// 4) conversation_id used when session_id is also absent
+	c.Request.Header.Del("session_id")
+	h4 := svc.GenerateSessionHash(c, bodyWithKey)
+	if h4 == "" {
 		t.Fatalf("expected non-empty hash")
 	}
-	if h2 == h3 {
+	if h3 == h4 {
 		t.Fatalf("expected different hashes for different keys")
 	}
 
-	// 4) empty when no signals
-	h4 := svc.GenerateSessionHash(c, []byte(`{}`))
-	if h4 != "" {
+	// 5) prompt_cache_key used when all session headers are absent
+	c.Request.Header.Del("conversation_id")
+	h5 := svc.GenerateSessionHash(c, bodyWithKey)
+	if h5 == "" {
+		t.Fatalf("expected non-empty hash")
+	}
+	if h4 == h5 {
+		t.Fatalf("expected different hashes for different keys")
+	}
+
+	// 6) empty when no signals
+	h6 := svc.GenerateSessionHash(c, []byte(`{}`))
+	if h6 != "" {
 		t.Fatalf("expected empty hash when no signals")
 	}
 }
@@ -391,6 +406,8 @@ func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 		name  string
 		value string
 	}{
+		{name: "session-id", value: "codex-session"},
+		{name: "thread-id", value: "codex-thread"},
 		{name: "session_id", value: "generic-session"},
 		{name: "conversation_id", value: "generic-conversation"},
 		{name: openCodeSessionAffinityHeader, value: "opencode-affinity"},
