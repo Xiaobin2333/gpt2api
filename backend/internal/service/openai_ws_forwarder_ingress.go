@@ -273,7 +273,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				normalized = capped
 			}
 		}
-		if compatibilityBody, compatibilityChanged, compatibilityErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(normalized, account); compatibilityErr != nil {
+		responsesLite := isOpenAIResponsesLiteWebSocketPayload(normalized)
+		if compatibilityBody, compatibilityChanged, compatibilityErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(normalized, account, responsesLite); compatibilityErr != nil {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", compatibilityErr)
 		} else if compatibilityChanged {
 			normalized = compatibilityBody
@@ -331,8 +332,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if accountScoped {
 			normalized = accountScopedPayload
 		}
-		if account.IsOpenAI() && isOpenAIResponsesLiteWebSocketPayload(normalized) {
-			litePayload, _, liteErr := normalizeOpenAIResponsesLiteToolsPayload(normalized)
+		if responsesLite {
+			litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(normalized, account)
 			if liteErr != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
