@@ -51,14 +51,18 @@ export default {
       toggleNode: '切换节点 {name}', deleteConfirm: '从草稿中删除节点“{name}”？保存配置后生效。',
     },
     policy: {
-      title: '审计策略', description: '配置适用分组、九类输入风险、Worker 与队列边界。', scope: '适用范围', allGroups: '全部分组', selectedGroups: '指定分组',
+      title: '审计策略', description: '配置适用分组、风险判定、拦截响应、Worker 与队列边界。', scope: '适用范围', allGroups: '全部分组', selectedGroups: '指定分组',
       searchGroups: '搜索分组', noGroups: '没有匹配分组', missingGroups: '配置中包含已删除的分组 ID', selectedCount: '已选择 {count} 个分组',
-      scanners: 'Qwen3Guard 输入风险分类', workerCount: 'Worker 数量', queueCapacity: '持久队列容量', strategy: '节点策略', strategyHint: '按配置顺序优先尝试，必要时故障切换。',
+      scanners: 'Qwen3Guard 输入风险分类', categoryThresholdsHint: '各分类可单独覆盖阈值；留空时继承右侧全局阈值。', categoryBlockThreshold: '分类阻断阈值', categoryFlagThreshold: '分类标记阈值', inheritGlobal: '继承全局（{level}）', decisionSettings: '风险判定与拦截响应', decisionSettingsHint: '直接使用 Qwen3Guard 返回的 Safe、Controversial、Unsafe 等级判定。',
+      safetyLevels: { Safe: 'Safe（安全）', Controversial: 'Controversial（有争议）', Unsafe: 'Unsafe（不安全）' },
+      blockThreshold: '全局阻断阈值', blockThresholdHint: '未单独配置的分类达到该值时阻断请求。', flagThreshold: '全局标记阈值', flagThresholdHint: '未单独配置的分类达到该值时记录风险事件但仍放行；不能高于阻断阈值。',
+      blockStatus: '拦截响应状态码', blockStatusHint: '阻断时返回给客户端的 HTTP 状态码，范围 400–499。', blockMessage: '拦截提示文案', blockMessageHint: '返回给客户端的说明文字，不会包含 Guard 的原始判定理由。',
+      workerCount: 'Worker 数量', queueCapacity: '持久队列容量', strategy: '节点策略', strategyHint: '按配置顺序优先尝试，必要时故障切换。',
     },
-    saveBar: { enabled: '启用提示词审计', blocking: '同步阻止', blockingLatestTurnOnly: '仅审最新输入和上一轮输出', storePass: '保存安全事件', dirty: '有未保存的更改', synced: '配置已同步' },
+    saveBar: { enabled: '启用提示词审计', blocking: '同步阻止', blockingLatestTurnOnly: '仅审最新输入和上一轮输出', failOpenOnGuardFailure: 'Guard 不可用或超时放行', storePass: '保存安全事件', dirty: '有未保存的更改', synced: '配置已同步' },
     blockingConfirm: {
       title: '开启同步阻止？',
-      message: '适用请求会在账号选择、计费和访问上游之前等待 Guard。命中 Block、Guard 不可用或响应非法时，请求都不会访问上游。',
+      message: '适用请求会在账号选择、计费和访问上游之前等待 Guard。命中 Block 或响应非法时请求不会访问上游；Guard 不可用或超时是否放行由独立开关控制。',
       confirm: '理解风险并开启',
     },
     events: {
@@ -95,6 +99,7 @@ export default {
       prompt_audit_config_conflict: '配置已被其他管理员更新。请重新加载服务端配置，再决定如何合并本地草稿。',
       prompt_audit_encryption_key_required: '未配置固定加密密钥，审计节点 API Key 将在服务重启后失效。请先设置 TOTP_ENCRYPTION_KEY 环境变量并重启服务。',
       prompt_guard_requires_audit_enabled: '开启同步阻止前必须先启用提示词审计。', prompt_audit_invalid_endpoint: '审计节点配置无效。', prompt_audit_endpoint_required: '启用审计前至少需要一个启用节点。', prompt_audit_groups_required: '指定分组模式至少需要选择一个分组。', prompt_audit_scanners_required: '至少需要启用一个风险分类。',
+      prompt_audit_invalid_block_threshold: '阻断阈值必须是 Safe、Controversial 或 Unsafe。', prompt_audit_invalid_flag_threshold: '标记阈值必须是 Safe、Controversial 或 Unsafe。', prompt_audit_invalid_threshold_order: '标记阈值不能高于阻断阈值。', prompt_audit_invalid_category_threshold: '分类阈值包含未知风险分类。', prompt_audit_invalid_category_block_threshold: '分类阻断阈值无效。', prompt_audit_invalid_category_flag_threshold: '分类标记阈值无效。', prompt_audit_invalid_category_threshold_order: '分类的有效标记阈值不能高于有效阻断阈值。', prompt_audit_invalid_block_status: '拦截响应状态码必须在 400 到 499 之间。', prompt_audit_invalid_block_message: '拦截提示文案不能为空且不能超过 512 个字符。',
     },
   },
 }

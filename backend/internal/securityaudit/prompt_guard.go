@@ -109,6 +109,7 @@ func (g *GuardEvaluator) Evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 			logGuardFailure(snapshot, cfg, kind, code, "", g.clock.Now().Sub(start))
 			return nil, err
 		}
+		applyThresholdPolicy(result, cfg.FlagThreshold, cfg.BlockThreshold, cfg.CategoryThresholds)
 		result.ChunkTotal = len(chunks)
 		results = append(results, result)
 		LogInfo(EventChunkCompleted, mergeLogFields(baseFields, map[string]any{

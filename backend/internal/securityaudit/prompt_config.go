@@ -14,17 +14,22 @@ import (
 )
 
 const (
-	DefaultWorkerCount   = 4
-	MaxWorkerCount       = 32
-	DefaultQueueCapacity = 32768
-	MaxQueueCapacity     = 100000
-	DefaultTimeoutMS     = 3000
-	MinTimeoutMS         = 100
-	MaxTimeoutMS         = 30000
-	DefaultInputLimit    = 4000
-	MinInputLimit        = 128
-	MaxInputLimit        = 100000
-	DefaultPayloadTTL    = 30 * time.Minute
+	DefaultWorkerCount    = 4
+	MaxWorkerCount        = 32
+	DefaultQueueCapacity  = 32768
+	MaxQueueCapacity      = 100000
+	DefaultTimeoutMS      = 3000
+	MinTimeoutMS          = 100
+	MaxTimeoutMS          = 30000
+	DefaultInputLimit     = 4000
+	MinInputLimit         = 128
+	MaxInputLimit         = 100000
+	DefaultBlockThreshold = "Unsafe"
+	DefaultFlagThreshold  = "Controversial"
+	DefaultBlockStatus    = 403
+	DefaultBlockMessage   = "请检查你的提示词，本次请求被审计系统拦截。"
+	MaxBlockMessageRunes  = 512
+	DefaultPayloadTTL     = 30 * time.Minute
 )
 
 type SecretEncryptor interface {
@@ -63,22 +68,33 @@ type StorageEndpoint struct {
 	Enabled         bool   `json:"enabled"`
 }
 
+type CategoryThresholdConfig struct {
+	BlockThreshold string `json:"block_threshold,omitempty"`
+	FlagThreshold  string `json:"flag_threshold,omitempty"`
+}
+
 type storageConfig struct {
-	Enabled                bool              `json:"enabled"`
-	BlockingEnabled        bool              `json:"blocking_enabled"`
-	BlockingLatestTurnOnly bool              `json:"blocking_latest_turn_only"`
-	StorePassEvents        bool              `json:"store_pass_events"`
-	Strategy               string            `json:"strategy"`
-	WorkerCount            int               `json:"worker_count"`
-	QueueCapacity          int               `json:"queue_capacity"`
-	Scanners               []string          `json:"scanners"`
-	AllGroups              bool              `json:"all_groups"`
-	GroupIDs               []int64           `json:"group_ids"`
-	Endpoints              []StorageEndpoint `json:"endpoints"`
-	ConfigVersion          int64             `json:"config_version"`
-	UpdatedAt              time.Time         `json:"updated_at"`
-	UpdatedBy              int64             `json:"updated_by"`
-	ChangeSummary          string            `json:"change_summary"`
+	Enabled                bool                               `json:"enabled"`
+	BlockingEnabled        bool                               `json:"blocking_enabled"`
+	BlockingLatestTurnOnly bool                               `json:"blocking_latest_turn_only"`
+	FailOpenOnGuardFailure bool                               `json:"fail_open_on_guard_failure"`
+	BlockThreshold         string                             `json:"block_threshold"`
+	FlagThreshold          string                             `json:"flag_threshold"`
+	CategoryThresholds     map[string]CategoryThresholdConfig `json:"category_thresholds"`
+	BlockStatus            int                                `json:"block_status"`
+	BlockMessage           string                             `json:"block_message"`
+	StorePassEvents        bool                               `json:"store_pass_events"`
+	Strategy               string                             `json:"strategy"`
+	WorkerCount            int                                `json:"worker_count"`
+	QueueCapacity          int                                `json:"queue_capacity"`
+	Scanners               []string                           `json:"scanners"`
+	AllGroups              bool                               `json:"all_groups"`
+	GroupIDs               []int64                            `json:"group_ids"`
+	Endpoints              []StorageEndpoint                  `json:"endpoints"`
+	ConfigVersion          int64                              `json:"config_version"`
+	UpdatedAt              time.Time                          `json:"updated_at"`
+	UpdatedBy              int64                              `json:"updated_by"`
+	ChangeSummary          string                             `json:"change_summary"`
 }
 
 type ActiveEndpoint struct {
@@ -103,6 +119,12 @@ type ActiveConfig struct {
 	Enabled                bool
 	BlockingEnabled        bool
 	BlockingLatestTurnOnly bool
+	FailOpenOnGuardFailure bool
+	BlockThreshold         string
+	FlagThreshold          string
+	CategoryThresholds     map[string]CategoryThresholdConfig
+	BlockStatus            int
+	BlockMessage           string
 	StorePassEvents        bool
 	Strategy               string
 	WorkerCount            int
@@ -131,22 +153,28 @@ type PublicEndpoint struct {
 }
 
 type PublicConfig struct {
-	Enabled                bool             `json:"enabled"`
-	BlockingEnabled        bool             `json:"blocking_enabled"`
-	BlockingLatestTurnOnly bool             `json:"blocking_latest_turn_only"`
-	StorePassEvents        bool             `json:"store_pass_events"`
-	EffectiveMode          Mode             `json:"effective_mode"`
-	Strategy               string           `json:"strategy"`
-	WorkerCount            int              `json:"worker_count"`
-	QueueCapacity          int              `json:"queue_capacity"`
-	Scanners               []string         `json:"scanners"`
-	AllGroups              bool             `json:"all_groups"`
-	GroupIDs               []int64          `json:"group_ids"`
-	Endpoints              []PublicEndpoint `json:"endpoints"`
-	ConfigVersion          int64            `json:"config_version"`
-	UpdatedAt              time.Time        `json:"updated_at"`
-	UpdatedBy              int64            `json:"updated_by"`
-	ChangeSummary          string           `json:"change_summary"`
+	Enabled                bool                               `json:"enabled"`
+	BlockingEnabled        bool                               `json:"blocking_enabled"`
+	BlockingLatestTurnOnly bool                               `json:"blocking_latest_turn_only"`
+	FailOpenOnGuardFailure bool                               `json:"fail_open_on_guard_failure"`
+	BlockThreshold         string                             `json:"block_threshold"`
+	FlagThreshold          string                             `json:"flag_threshold"`
+	CategoryThresholds     map[string]CategoryThresholdConfig `json:"category_thresholds"`
+	BlockStatus            int                                `json:"block_status"`
+	BlockMessage           string                             `json:"block_message"`
+	StorePassEvents        bool                               `json:"store_pass_events"`
+	EffectiveMode          Mode                               `json:"effective_mode"`
+	Strategy               string                             `json:"strategy"`
+	WorkerCount            int                                `json:"worker_count"`
+	QueueCapacity          int                                `json:"queue_capacity"`
+	Scanners               []string                           `json:"scanners"`
+	AllGroups              bool                               `json:"all_groups"`
+	GroupIDs               []int64                            `json:"group_ids"`
+	Endpoints              []PublicEndpoint                   `json:"endpoints"`
+	ConfigVersion          int64                              `json:"config_version"`
+	UpdatedAt              time.Time                          `json:"updated_at"`
+	UpdatedBy              int64                              `json:"updated_by"`
+	ChangeSummary          string                             `json:"change_summary"`
 }
 
 type UpdateEndpoint struct {
@@ -163,18 +191,24 @@ type UpdateEndpoint struct {
 }
 
 type UpdateConfigRequest struct {
-	ExpectedConfigVersion  int64            `json:"expected_config_version" binding:"required"`
-	Enabled                bool             `json:"enabled"`
-	BlockingEnabled        bool             `json:"blocking_enabled"`
-	BlockingLatestTurnOnly bool             `json:"blocking_latest_turn_only"`
-	StorePassEvents        bool             `json:"store_pass_events"`
-	Strategy               string           `json:"strategy"`
-	WorkerCount            int              `json:"worker_count"`
-	QueueCapacity          int              `json:"queue_capacity"`
-	Scanners               []string         `json:"scanners"`
-	AllGroups              bool             `json:"all_groups"`
-	GroupIDs               []int64          `json:"group_ids"`
-	Endpoints              []UpdateEndpoint `json:"endpoints"`
+	ExpectedConfigVersion  int64                              `json:"expected_config_version" binding:"required"`
+	Enabled                bool                               `json:"enabled"`
+	BlockingEnabled        bool                               `json:"blocking_enabled"`
+	BlockingLatestTurnOnly bool                               `json:"blocking_latest_turn_only"`
+	FailOpenOnGuardFailure bool                               `json:"fail_open_on_guard_failure"`
+	BlockThreshold         string                             `json:"block_threshold"`
+	FlagThreshold          string                             `json:"flag_threshold"`
+	CategoryThresholds     map[string]CategoryThresholdConfig `json:"category_thresholds"`
+	BlockStatus            int                                `json:"block_status"`
+	BlockMessage           string                             `json:"block_message"`
+	StorePassEvents        bool                               `json:"store_pass_events"`
+	Strategy               string                             `json:"strategy"`
+	WorkerCount            int                                `json:"worker_count"`
+	QueueCapacity          int                                `json:"queue_capacity"`
+	Scanners               []string                           `json:"scanners"`
+	AllGroups              bool                               `json:"all_groups"`
+	GroupIDs               []int64                            `json:"group_ids"`
+	Endpoints              []UpdateEndpoint                   `json:"endpoints"`
 }
 
 func DefaultStorageConfig() storageConfig {
@@ -182,6 +216,12 @@ func DefaultStorageConfig() storageConfig {
 		Enabled:                false,
 		BlockingEnabled:        false,
 		BlockingLatestTurnOnly: false,
+		FailOpenOnGuardFailure: false,
+		BlockThreshold:         DefaultBlockThreshold,
+		FlagThreshold:          DefaultFlagThreshold,
+		CategoryThresholds:     DefaultCategoryThresholds(),
+		BlockStatus:            DefaultBlockStatus,
+		BlockMessage:           DefaultBlockMessage,
 		StorePassEvents:        false,
 		Strategy:               "priority",
 		WorkerCount:            DefaultWorkerCount,
@@ -199,8 +239,21 @@ func ParseStorageConfig(raw string) (storageConfig, error) {
 	if strings.TrimSpace(raw) == "" {
 		return cfg, nil
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return storageConfig{}, fmt.Errorf("decode prompt audit config: %w", err)
+	}
+	_, categoryThresholdsPresent := fields["category_thresholds"]
+	if categoryThresholdsPresent {
+		// An explicit empty object clears the compatibility defaults. A missing
+		// field keeps them for configurations saved before per-category controls.
+		cfg.CategoryThresholds = nil
+	}
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return storageConfig{}, fmt.Errorf("decode prompt audit config: %w", err)
+	}
+	if categoryThresholdsPresent && cfg.CategoryThresholds == nil {
+		cfg.CategoryThresholds = map[string]CategoryThresholdConfig{}
 	}
 	normalizeStorageConfig(&cfg)
 	if err := validateStorageConfig(cfg); err != nil {
@@ -225,6 +278,10 @@ func normalizeStorageConfig(cfg *storageConfig) {
 	if cfg.QueueCapacity == 0 {
 		cfg.QueueCapacity = DefaultQueueCapacity
 	}
+	cfg.BlockThreshold = canonicalSafetyLevel(cfg.BlockThreshold)
+	cfg.FlagThreshold = canonicalSafetyLevel(cfg.FlagThreshold)
+	cfg.CategoryThresholds = canonicalCategoryThresholds(cfg.CategoryThresholds)
+	cfg.BlockMessage = strings.TrimSpace(cfg.BlockMessage)
 	if len(cfg.Scanners) == 0 {
 		cfg.Scanners = append([]string(nil), AllScannerIDs...)
 	}
@@ -266,6 +323,12 @@ func validateStorageConfig(cfg storageConfig) error {
 	}
 	if cfg.QueueCapacity < 1 || cfg.QueueCapacity > MaxQueueCapacity {
 		return infraerrors.BadRequest("prompt_audit_invalid_queue_capacity", "队列容量超出允许范围")
+	}
+	if err := validateDecisionSettings(cfg.BlockThreshold, cfg.FlagThreshold, cfg.BlockStatus, cfg.BlockMessage); err != nil {
+		return err
+	}
+	if err := validateCategoryThresholds(cfg.BlockThreshold, cfg.FlagThreshold, cfg.CategoryThresholds); err != nil {
+		return err
 	}
 	if !cfg.AllGroups && len(cfg.GroupIDs) == 0 {
 		return infraerrors.BadRequest("prompt_audit_groups_required", "指定分组模式至少需要选择一个分组")
@@ -315,6 +378,12 @@ func validateUpdateConfigRequest(req UpdateConfigRequest) error {
 	if req.QueueCapacity < 1 || req.QueueCapacity > MaxQueueCapacity {
 		return infraerrors.BadRequest("prompt_audit_invalid_queue_capacity", "队列容量超出允许范围")
 	}
+	if err := validateDecisionSettings(req.BlockThreshold, req.FlagThreshold, req.BlockStatus, req.BlockMessage); err != nil {
+		return err
+	}
+	if err := validateCategoryThresholds(req.BlockThreshold, req.FlagThreshold, req.CategoryThresholds); err != nil {
+		return err
+	}
 	if len(req.Scanners) == 0 {
 		return infraerrors.BadRequest("prompt_audit_scanners_required", "至少需要启用一个风险分类")
 	}
@@ -342,6 +411,123 @@ func validateUpdateConfigRequest(req UpdateConfigRequest) error {
 		}
 	}
 	return nil
+}
+
+func validateDecisionSettings(blockThreshold, flagThreshold string, blockStatus int, blockMessage string) error {
+	blockRank, blockValid := safetyLevelRank(blockThreshold)
+	if !blockValid {
+		return infraerrors.BadRequest("prompt_audit_invalid_block_threshold", "阻断阈值必须是 Safe、Controversial 或 Unsafe")
+	}
+	flagRank, flagValid := safetyLevelRank(flagThreshold)
+	if !flagValid {
+		return infraerrors.BadRequest("prompt_audit_invalid_flag_threshold", "标记阈值必须是 Safe、Controversial 或 Unsafe")
+	}
+	if flagRank > blockRank {
+		return infraerrors.BadRequest("prompt_audit_invalid_threshold_order", "标记阈值不能高于阻断阈值")
+	}
+	if blockStatus < 400 || blockStatus > 499 {
+		return infraerrors.BadRequest("prompt_audit_invalid_block_status", "拦截响应状态码必须在 400 到 499 之间")
+	}
+	message := strings.TrimSpace(blockMessage)
+	if message == "" || len([]rune(message)) > MaxBlockMessageRunes {
+		return infraerrors.BadRequest("prompt_audit_invalid_block_message", "拦截提示文案不能为空且不能超过 512 个字符")
+	}
+	return nil
+}
+
+func validateCategoryThresholds(globalBlock, globalFlag string, values map[string]CategoryThresholdConfig) error {
+	for category, thresholds := range values {
+		category = NormalizeCategory(category)
+		if _, ok := ScannerCatalog[category]; !ok {
+			return infraerrors.BadRequest("prompt_audit_invalid_category_threshold", "分类阈值包含未知风险分类")
+		}
+		block := thresholds.BlockThreshold
+		if strings.TrimSpace(block) == "" {
+			block = globalBlock
+		}
+		blockRank, blockValid := safetyLevelRank(block)
+		if !blockValid {
+			return infraerrors.BadRequest("prompt_audit_invalid_category_block_threshold", "分类阻断阈值必须是 Safe、Controversial、Unsafe 或留空继承全局")
+		}
+		flag := thresholds.FlagThreshold
+		if strings.TrimSpace(flag) == "" {
+			flag = globalFlag
+		}
+		flagRank, flagValid := safetyLevelRank(flag)
+		if !flagValid {
+			return infraerrors.BadRequest("prompt_audit_invalid_category_flag_threshold", "分类标记阈值必须是 Safe、Controversial、Unsafe 或留空继承全局")
+		}
+		if flagRank > blockRank {
+			return infraerrors.BadRequest("prompt_audit_invalid_category_threshold_order", "分类的有效标记阈值不能高于有效阻断阈值")
+		}
+	}
+	return nil
+}
+
+func canonicalSafetyLevel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "safe":
+		return "Safe"
+	case "controversial":
+		return "Controversial"
+	case "unsafe":
+		return "Unsafe"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func safetyLevelRank(value string) (int, bool) {
+	switch canonicalSafetyLevel(value) {
+	case "Safe":
+		return 0, true
+	case "Controversial":
+		return 1, true
+	case "Unsafe":
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func DefaultCategoryThresholds() map[string]CategoryThresholdConfig {
+	return map[string]CategoryThresholdConfig{
+		"pii":                   {BlockThreshold: "Controversial"},
+		"suicide_and_self_harm": {BlockThreshold: "Controversial"},
+		"jailbreak":             {BlockThreshold: "Controversial"},
+	}
+}
+
+func canonicalCategoryThresholds(values map[string]CategoryThresholdConfig) map[string]CategoryThresholdConfig {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]CategoryThresholdConfig, len(values))
+	for category, thresholds := range values {
+		result[NormalizeCategory(category)] = CategoryThresholdConfig{
+			BlockThreshold: canonicalOptionalSafetyLevel(thresholds.BlockThreshold),
+			FlagThreshold:  canonicalOptionalSafetyLevel(thresholds.FlagThreshold),
+		}
+	}
+	return result
+}
+
+func canonicalOptionalSafetyLevel(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return canonicalSafetyLevel(value)
+}
+
+func cloneCategoryThresholds(values map[string]CategoryThresholdConfig) map[string]CategoryThresholdConfig {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]CategoryThresholdConfig, len(values))
+	for category, thresholds := range values {
+		result[category] = thresholds
+	}
+	return result
 }
 
 func (cfg ActiveConfig) EffectiveMode() Mode {
@@ -412,8 +598,12 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 	}
 	active := ActiveConfig{RiskControlEnabled: riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled}
 	return PublicConfig{
-		Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled, BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, StorePassEvents: cfg.StorePassEvents,
-		EffectiveMode: active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
+		Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled, BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly,
+		FailOpenOnGuardFailure: cfg.FailOpenOnGuardFailure, BlockThreshold: cfg.BlockThreshold,
+		FlagThreshold: cfg.FlagThreshold, CategoryThresholds: cloneCategoryThresholds(cfg.CategoryThresholds),
+		BlockStatus: cfg.BlockStatus, BlockMessage: cfg.BlockMessage,
+		StorePassEvents: cfg.StorePassEvents,
+		EffectiveMode:   active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		QueueCapacity: cfg.QueueCapacity, Scanners: scanners, AllGroups: cfg.AllGroups,
 		GroupIDs: groupIDs, Endpoints: endpoints, ConfigVersion: cfg.ConfigVersion,
 		UpdatedAt: cfg.UpdatedAt, UpdatedBy: cfg.UpdatedBy, ChangeSummary: cfg.ChangeSummary,
@@ -423,8 +613,11 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor SecretEncryptor) (ActiveConfig, error) {
 	active := ActiveConfig{
 		RiskControlEnabled: riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
-		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly,
-		StorePassEvents:        cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
+		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, FailOpenOnGuardFailure: cfg.FailOpenOnGuardFailure,
+		BlockThreshold: cfg.BlockThreshold, FlagThreshold: cfg.FlagThreshold,
+		CategoryThresholds: cloneCategoryThresholds(cfg.CategoryThresholds),
+		BlockStatus:        cfg.BlockStatus, BlockMessage: cfg.BlockMessage,
+		StorePassEvents: cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		QueueCapacity: cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,
 		GroupIDs: append([]int64(nil), cfg.GroupIDs...), ConfigVersion: cfg.ConfigVersion,
 		UpdatedAt: cfg.UpdatedAt, UpdatedBy: cfg.UpdatedBy, ChangeSummary: cfg.ChangeSummary,
@@ -463,16 +656,35 @@ func changeSummary(cfg storageConfig) string {
 		Enabled                bool   `json:"enabled"`
 		BlockingEnabled        bool   `json:"blocking_enabled"`
 		BlockingLatestTurnOnly bool   `json:"blocking_latest_turn_only"`
+		FailOpenOnGuardFailure bool   `json:"fail_open_on_guard_failure"`
+		BlockThreshold         string `json:"block_threshold"`
+		FlagThreshold          string `json:"flag_threshold"`
+		CategoryThresholdCount int    `json:"category_threshold_count"`
+		CategoryThresholdHash  string `json:"category_threshold_hash"`
+		BlockStatus            int    `json:"block_status"`
+		BlockMessageHash       string `json:"block_message_hash"`
 		StorePassEvents        bool   `json:"store_pass_events"`
 		EndpointCount          int    `json:"endpoint_count"`
 		ScannerCount           int    `json:"scanner_count"`
 		AllGroups              bool   `json:"all_groups"`
 		GroupCount             int    `json:"group_count"`
 		GroupHash              string `json:"group_hash"`
-	}{cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), ""}
+	}{
+		Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
+		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, FailOpenOnGuardFailure: cfg.FailOpenOnGuardFailure,
+		BlockThreshold: cfg.BlockThreshold, FlagThreshold: cfg.FlagThreshold,
+		CategoryThresholdCount: len(cfg.CategoryThresholds), BlockStatus: cfg.BlockStatus,
+		StorePassEvents: cfg.StorePassEvents, EndpointCount: len(cfg.Endpoints), ScannerCount: len(cfg.Scanners),
+		AllGroups: cfg.AllGroups, GroupCount: len(cfg.GroupIDs),
+	}
 	rawGroups, _ := json.Marshal(cfg.GroupIDs)
 	digest := sha256.Sum256(rawGroups)
 	summary.GroupHash = hex.EncodeToString(digest[:])
+	messageDigest := sha256.Sum256([]byte(cfg.BlockMessage))
+	summary.BlockMessageHash = hex.EncodeToString(messageDigest[:])
+	rawCategoryThresholds, _ := json.Marshal(cfg.CategoryThresholds)
+	categoryThresholdDigest := sha256.Sum256(rawCategoryThresholds)
+	summary.CategoryThresholdHash = hex.EncodeToString(categoryThresholdDigest[:])
 	raw, _ := json.Marshal(summary)
 	return string(raw)
 }

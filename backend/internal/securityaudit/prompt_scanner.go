@@ -26,6 +26,69 @@ func SplitRunes(value string, limit int) []string {
 	return chunks
 }
 
+// applyThresholdPolicy compares Qwen3Guard's native ordered safety levels.
+// Only enabled or unknown categories may block; findings in disabled known
+// categories are still recorded as flags for administrator review.
+func applyThresholdPolicy(result *NormalizedResult, flagThreshold, blockThreshold string, categoryThresholds map[string]CategoryThresholdConfig) {
+	if result == nil {
+		return
+	}
+	level, levelValid := safetyLevelRank(result.Safety)
+	flagLevel, flagValid := safetyLevelRank(flagThreshold)
+	blockLevel, blockValid := safetyLevelRank(blockThreshold)
+	if !levelValid || !flagValid || !blockValid {
+		return
+	}
+	shouldBlock := false
+	shouldFlag := false
+	matched := make(map[string]struct{}, len(result.MatchedScanners))
+	for _, scanner := range result.MatchedScanners {
+		scanner = NormalizeCategory(scanner)
+		matched[scanner] = struct{}{}
+		categoryFlagLevel, categoryBlockLevel := flagLevel, blockLevel
+		if thresholds, ok := categoryThresholds[scanner]; ok {
+			if rank, valid := safetyLevelRank(thresholds.FlagThreshold); valid {
+				categoryFlagLevel = rank
+			}
+			if rank, valid := safetyLevelRank(thresholds.BlockThreshold); valid {
+				categoryBlockLevel = rank
+			}
+		}
+		shouldBlock = shouldBlock || level >= categoryBlockLevel
+		shouldFlag = shouldFlag || level >= categoryFlagLevel
+	}
+	for _, category := range result.Categories {
+		if _, enabled := matched[NormalizeCategory(category)]; !enabled {
+			shouldFlag = shouldFlag || level >= flagLevel
+		}
+	}
+	if len(result.UnknownCategories) > 0 {
+		shouldBlock = shouldBlock || level >= blockLevel
+		shouldFlag = shouldFlag || level >= flagLevel
+	}
+	if len(result.Categories) == 0 && len(result.MatchedScanners) == 0 && len(result.UnknownCategories) == 0 {
+		shouldBlock = level >= blockLevel
+		shouldFlag = level >= flagLevel
+	}
+	switch {
+	case shouldBlock:
+		result.Decision = EventCritical
+		result.RiskLevel = RiskCritical
+		result.Action = ActionBlock
+	case shouldFlag:
+		result.Decision = EventFlag
+		result.RiskLevel = RiskMedium
+		if result.Safety == "Unsafe" {
+			result.RiskLevel = RiskHigh
+		}
+		result.Action = ActionWarn
+	default:
+		result.Decision = EventPass
+		result.RiskLevel = RiskLow
+		result.Action = ActionAllow
+	}
+}
+
 func AggregateResults(results []*NormalizedResult, latency time.Duration) (*NormalizedResult, error) {
 	if len(results) == 0 {
 		return nil, errors.New("prompt guard produced no complete result")

@@ -225,6 +225,10 @@ func validHandlerUpdateRequest(token string) UpdateConfigRequest {
 		Strategy:              "priority",
 		WorkerCount:           1,
 		QueueCapacity:         10,
+		BlockThreshold:        DefaultBlockThreshold,
+		FlagThreshold:         DefaultFlagThreshold,
+		BlockStatus:           DefaultBlockStatus,
+		BlockMessage:          DefaultBlockMessage,
 		Scanners:              []string{"pii"},
 		AllGroups:             true,
 		Endpoints: []UpdateEndpoint{{

@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,70 @@ func TestPromptServiceBlockingLatestTurnOnlyUsesNarrowSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, DecisionAllow, decision.Kind)
 	require.Equal(t, []string{"latest user input", "previous output"}, seen)
+}
+
+func TestPromptServiceFailOpenOnlyForGuardUnavailable(t *testing.T) {
+	tests := []struct {
+		name      string
+		scanErr   error
+		wantAllow bool
+	}{
+		{name: "unavailable", scanErr: &GuardError{Code: ErrorCodeUnavailable, Retryable: true}, wantAllow: true},
+		{name: "timeout", scanErr: &GuardError{Code: ErrorCodeUnavailable, Retryable: true, Timeout: true, Cause: context.DeadlineExceeded}, wantAllow: true},
+		{name: "invalid response", scanErr: &GuardError{Code: ErrorCodeInvalidResponse}, wantAllow: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evaluator := newGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+				return nil, test.scanErr
+			}), nil, NewAtomicMetrics(), 2, 2)
+			service := &PromptService{
+				config: &fakeConfigStore{active: true, cfg: ActiveConfig{
+					RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, FailOpenOnGuardFailure: true, AllGroups: true,
+					Scanners: AllScannerIDs, Endpoints: []ActiveEndpoint{{ID: "guard-1", Enabled: true, TimeoutMS: 1000, InputLimit: 4096}},
+				}},
+				evaluator: evaluator,
+			}
+			decision, err := service.Evaluate(context.Background(), Request{
+				Protocol: "openai_chat_completions",
+				Body:     []byte(`{"messages":[{"role":"user","content":"hello"}]}`),
+			})
+			if test.wantAllow {
+				require.NoError(t, err)
+				require.Equal(t, DecisionUnavailable, decision.Kind)
+				require.True(t, decision.AllowNextStage)
+				return
+			}
+			require.Error(t, err)
+			require.Nil(t, decision)
+		})
+	}
+}
+
+func TestPromptServiceAttachesConfiguredBlockResponse(t *testing.T) {
+	evaluator := newGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+		return &NormalizedResult{
+			Decision: EventCritical, RiskLevel: RiskCritical, Action: ActionBlock, Safety: "Unsafe",
+			Categories: []string{"jailbreak"}, MatchedScanners: []string{"jailbreak"},
+		}, nil
+	}), nil, NewAtomicMetrics(), 2, 2)
+	service := &PromptService{
+		config: &fakeConfigStore{active: true, cfg: ActiveConfig{
+			RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, AllGroups: true,
+			BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold,
+			BlockStatus: http.StatusUnprocessableEntity, BlockMessage: "configured prompt block",
+			Scanners: AllScannerIDs, Endpoints: []ActiveEndpoint{{ID: "guard-1", Enabled: true, TimeoutMS: 1000, InputLimit: 4096}},
+		}},
+		evaluator: evaluator,
+	}
+	decision, err := service.Evaluate(context.Background(), Request{
+		Protocol: "openai_chat_completions",
+		Body:     []byte(`{"messages":[{"role":"user","content":"unsafe input"}]}`),
+	})
+	require.NoError(t, err)
+	require.Equal(t, DecisionBlock, decision.Kind)
+	require.Equal(t, http.StatusUnprocessableEntity, decision.HTTPStatus)
+	require.Equal(t, "configured prompt block", decision.ClientMessage)
 }
 
 func TestPromptServiceRejectsInvalidDeleteConfirmationClaims(t *testing.T) {

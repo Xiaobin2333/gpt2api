@@ -14,6 +14,16 @@ const config = (): PromptAuditConfig => ({
   enabled: true,
   blocking_enabled: false,
   blocking_latest_turn_only: false,
+  fail_open_on_guard_failure: false,
+  block_threshold: 'Unsafe',
+  flag_threshold: 'Controversial',
+  category_thresholds: {
+    pii: { block_threshold: 'Controversial' },
+    suicide_and_self_harm: { block_threshold: 'Controversial' },
+    jailbreak: { block_threshold: 'Controversial' },
+  },
+  block_status: 403,
+  block_message: 'blocked',
   store_pass_events: false,
   effective_mode: 'async_audit',
   strategy: 'priority',
@@ -35,8 +45,15 @@ const config = (): PromptAuditConfig => ({
 
 describe('Prompt Audit view model', () => {
   it('normalizes legacy null collections from the public config', () => {
-    const legacy = { ...config(), group_ids: null, scanners: null, endpoints: null } as unknown as PromptAuditConfig
-    expect(configToDraft(legacy)).toMatchObject({ group_ids: [], scanners: [], endpoints: [] })
+    const legacy = { ...config(), group_ids: null, scanners: null, endpoints: null, category_thresholds: null } as unknown as PromptAuditConfig
+    expect(configToDraft(legacy)).toMatchObject({
+      group_ids: [], scanners: [], endpoints: [],
+      category_thresholds: {
+        pii: { block_threshold: 'Controversial' },
+        suicide_and_self_harm: { block_threshold: 'Controversial' },
+        jailbreak: { block_threshold: 'Controversial' },
+      },
+    })
   })
 
   it('models all nine official input scanners', () => {
@@ -60,7 +77,29 @@ describe('Prompt Audit view model', () => {
   it('includes the optional narrow blocking scope in the update payload', () => {
     const draft = configToDraft(config())
     draft.blocking_latest_turn_only = true
-    expect(buildUpdateRequest(draft)).toMatchObject({ blocking_latest_turn_only: true })
+    draft.fail_open_on_guard_failure = true
+    expect(buildUpdateRequest(draft)).toMatchObject({ blocking_latest_turn_only: true, fail_open_on_guard_failure: true })
+  })
+
+  it('includes normalized decision thresholds and block response settings', () => {
+    const draft = configToDraft(config())
+    draft.block_threshold = 'Controversial'
+    draft.flag_threshold = 'Safe'
+    draft.block_status = 422
+    draft.block_message = '  custom block message  '
+    draft.category_thresholds.violent = { block_threshold: 'Controversial' }
+    draft.category_thresholds.pii = {}
+    expect(buildUpdateRequest(draft)).toMatchObject({
+      block_threshold: 'Controversial',
+      flag_threshold: 'Safe',
+      block_status: 422,
+      block_message: 'custom block message',
+      category_thresholds: {
+        violent: { block_threshold: 'Controversial' },
+        suicide_and_self_harm: { block_threshold: 'Controversial' },
+        jailbreak: { block_threshold: 'Controversial' },
+      },
+    })
   })
 
   it('tracks dirty state from the full normalized save payload', () => {
@@ -68,6 +107,9 @@ describe('Prompt Audit view model', () => {
     const changed = configToDraft(config())
     expect(draftFingerprint(changed)).toBe(draftFingerprint(original))
     changed.queue_capacity += 1
+    expect(draftFingerprint(changed)).not.toBe(draftFingerprint(original))
+    changed.queue_capacity = original.queue_capacity
+    changed.category_thresholds.violent = { block_threshold: 'Controversial' }
     expect(draftFingerprint(changed)).not.toBe(draftFingerprint(original))
   })
 

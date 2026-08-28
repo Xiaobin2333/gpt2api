@@ -174,3 +174,41 @@ func TestCoordinatorAsyncEnqueueFailuresNeverChangeResponseOrDownstreamDispatch(
 		require.Zero(t, prompt.evaluates.Load())
 	}
 }
+
+func TestCoordinatorFailOpenPreservesLegacyModerationPriority(t *testing.T) {
+	failOpen := &PromptDecision{Kind: DecisionUnavailable, ErrorCode: ErrorCodeUnavailable, AllowNextStage: true}
+
+	allowed := NewCoordinator(
+		&fakeLegacyEngine{decision: &LegacyDecision{Allowed: true}},
+		&fakePromptEngine{mode: ModeBlocking, decision: failOpen},
+	).Check(context.Background(), Request{})
+	require.Equal(t, DecisionUnavailable, allowed.Kind)
+	require.Equal(t, http.StatusOK, allowed.HTTPStatus)
+	require.True(t, allowed.AllowNextStage)
+
+	blocked := NewCoordinator(
+		&fakeLegacyEngine{decision: &LegacyDecision{Blocked: true, StatusCode: http.StatusForbidden, ErrorCode: "legacy_blocked"}},
+		&fakePromptEngine{mode: ModeBlocking, decision: failOpen},
+	).Check(context.Background(), Request{})
+	require.Equal(t, DecisionBlock, blocked.Kind)
+	require.Equal(t, "legacy_blocked", blocked.ErrorCode)
+	require.False(t, blocked.AllowNextStage)
+}
+
+func TestCoordinatorUsesConfiguredPromptBlockResponseWithoutOverridingLegacy(t *testing.T) {
+	promptBlock := &PromptDecision{Kind: DecisionBlock, HTTPStatus: http.StatusUnprocessableEntity, ClientMessage: "custom prompt block"}
+	custom := NewCoordinator(
+		&fakeLegacyEngine{decision: &LegacyDecision{Allowed: true}},
+		&fakePromptEngine{mode: ModeBlocking, decision: promptBlock},
+	).Check(context.Background(), Request{})
+	require.Equal(t, http.StatusUnprocessableEntity, custom.HTTPStatus)
+	require.Equal(t, "custom prompt block", custom.ClientMessage)
+
+	legacy := NewCoordinator(
+		&fakeLegacyEngine{decision: &LegacyDecision{Blocked: true, StatusCode: http.StatusTeapot, ErrorCode: "legacy", Message: "legacy block"}},
+		&fakePromptEngine{mode: ModeBlocking, decision: promptBlock},
+	).Check(context.Background(), Request{})
+	require.Equal(t, http.StatusTeapot, legacy.HTTPStatus)
+	require.Equal(t, "legacy block", legacy.ClientMessage)
+	require.Equal(t, "legacy", legacy.ErrorCode)
+}

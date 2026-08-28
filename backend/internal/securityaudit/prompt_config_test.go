@@ -35,6 +35,12 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, storage.Enabled)
 	require.False(t, storage.BlockingLatestTurnOnly)
+	require.False(t, storage.FailOpenOnGuardFailure)
+	require.Equal(t, DefaultBlockThreshold, storage.BlockThreshold)
+	require.Equal(t, DefaultFlagThreshold, storage.FlagThreshold)
+	require.Equal(t, DefaultCategoryThresholds(), storage.CategoryThresholds)
+	require.Equal(t, DefaultBlockStatus, storage.BlockStatus)
+	require.Equal(t, DefaultBlockMessage, storage.BlockMessage)
 	active, err := ActiveFromStorage(storage, true, prefixEncryptor{})
 	require.NoError(t, err)
 	require.Equal(t, ModeOff, active.EffectiveMode())
@@ -45,10 +51,33 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.Contains(t, string(publicJSON), `"endpoints":[]`)
 }
 
-func TestBlockingLatestTurnOnlyConfigRoundTrip(t *testing.T) {
+func TestCategoryThresholdConfigBackwardCompatibilityAndExplicitClear(t *testing.T) {
+	legacy, err := ParseStorageConfig(`{"enabled":false,"config_version":9}`)
+	require.NoError(t, err)
+	require.Equal(t, DefaultCategoryThresholds(), legacy.CategoryThresholds)
+
+	cleared, err := ParseStorageConfig(`{"enabled":false,"config_version":9,"category_thresholds":{}}`)
+	require.NoError(t, err)
+	require.NotNil(t, cleared.CategoryThresholds)
+	require.Empty(t, cleared.CategoryThresholds)
+	nullCleared, err := ParseStorageConfig(`{"enabled":false,"config_version":9,"category_thresholds":null}`)
+	require.NoError(t, err)
+	require.NotNil(t, nullCleared.CategoryThresholds)
+	require.Empty(t, nullCleared.CategoryThresholds)
+
+	configured, err := ParseStorageConfig(`{"enabled":false,"config_version":9,"category_thresholds":{"Violent":{"block_threshold":"controversial"},"pii":{"flag_threshold":"safe"}}}`)
+	require.NoError(t, err)
+	require.Equal(t, map[string]CategoryThresholdConfig{
+		"violent": {BlockThreshold: "Controversial"},
+		"pii":     {FlagThreshold: "Safe"},
+	}, configured.CategoryThresholds)
+}
+
+func TestBlockingPolicyConfigRoundTrip(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
 	request := UpdateConfigRequest{
-		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, BlockingLatestTurnOnly: true,
+		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, BlockingLatestTurnOnly: true, FailOpenOnGuardFailure: true,
+		BlockThreshold: "Controversial", FlagThreshold: "Safe", BlockStatus: 422, BlockMessage: "custom block message",
 		Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
 		Endpoints: []UpdateEndpoint{{
 			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080",
@@ -58,13 +87,61 @@ func TestBlockingLatestTurnOnlyConfigRoundTrip(t *testing.T) {
 	next, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
 	require.NoError(t, err)
 	require.True(t, next.BlockingLatestTurnOnly)
+	require.True(t, next.FailOpenOnGuardFailure)
+	require.Equal(t, "Controversial", next.BlockThreshold)
+	require.Equal(t, "Safe", next.FlagThreshold)
+	require.Equal(t, DefaultCategoryThresholds(), next.CategoryThresholds)
+	require.Equal(t, 422, next.BlockStatus)
+	require.Equal(t, "custom block message", next.BlockMessage)
 	require.Contains(t, changeSummary(next), `"blocking_latest_turn_only":true`)
+	require.Contains(t, changeSummary(next), `"fail_open_on_guard_failure":true`)
 
 	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
 	require.NoError(t, err)
 	require.True(t, active.BlockingLatestTurnOnly)
+	require.True(t, active.FailOpenOnGuardFailure)
+	require.Equal(t, "Controversial", active.BlockThreshold)
+	require.Equal(t, "Safe", active.FlagThreshold)
+	require.Equal(t, DefaultCategoryThresholds(), active.CategoryThresholds)
+	require.Equal(t, 422, active.BlockStatus)
+	require.Equal(t, "custom block message", active.BlockMessage)
 	public := PublicFromStorage(next, true, nil)
 	require.True(t, public.BlockingLatestTurnOnly)
+	require.True(t, public.FailOpenOnGuardFailure)
+	require.Equal(t, "Controversial", public.BlockThreshold)
+	require.Equal(t, "Safe", public.FlagThreshold)
+	require.Equal(t, DefaultCategoryThresholds(), public.CategoryThresholds)
+	require.Equal(t, 422, public.BlockStatus)
+	require.Equal(t, "custom block message", public.BlockMessage)
+}
+
+func TestBuildNextStoragePreservesMissingAndHonorsExplicitCategoryThresholds(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	current := DefaultStorageConfig()
+	base := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold,
+		BlockStatus: DefaultBlockStatus, BlockMessage: DefaultBlockMessage, Strategy: "priority", WorkerCount: 1,
+		QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
+	}
+
+	preserved, err := manager.buildNextStorage(current, base, 9)
+	require.NoError(t, err)
+	require.Equal(t, DefaultCategoryThresholds(), preserved.CategoryThresholds)
+
+	base.CategoryThresholds = map[string]CategoryThresholdConfig{}
+	cleared, err := manager.buildNextStorage(current, base, 9)
+	require.NoError(t, err)
+	require.NotNil(t, cleared.CategoryThresholds)
+	require.Empty(t, cleared.CategoryThresholds)
+
+	base.CategoryThresholds = map[string]CategoryThresholdConfig{
+		"violent": {BlockThreshold: "controversial", FlagThreshold: "safe"},
+	}
+	configured, err := manager.buildNextStorage(current, base, 9)
+	require.NoError(t, err)
+	require.Equal(t, map[string]CategoryThresholdConfig{
+		"violent": {BlockThreshold: "Controversial", FlagThreshold: "Safe"},
+	}, configured.CategoryThresholds)
 }
 
 func TestConfigRejectsBlockingWithoutAudit(t *testing.T) {
@@ -209,7 +286,7 @@ func TestBuildNextStoragePreserveReplaceAndClearToken(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
 	current := DefaultStorageConfig()
 	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
-	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
+	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold, BlockStatus: DefaultBlockStatus, BlockMessage: DefaultBlockMessage, Scanners: []string{"PII"}, AllGroups: true,
 		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000}}}
 	preserved, err := manager.buildNextStorage(current, base, 9)
 	require.NoError(t, err)
@@ -237,7 +314,7 @@ func TestBuildNextStorageRejectsNewTokenWithoutConfiguredEncryptionKey(t *testin
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: false}
 	current := DefaultStorageConfig()
 	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
-	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
+	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold, BlockStatus: DefaultBlockStatus, BlockMessage: DefaultBlockMessage, Scanners: []string{"PII"}, AllGroups: true,
 		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000}}}
 
 	newTokenReq := base
@@ -417,6 +494,10 @@ func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testin
 	require.Equal(t, "priority", storage.Strategy)
 	require.Equal(t, DefaultWorkerCount, storage.WorkerCount)
 	require.Equal(t, DefaultQueueCapacity, storage.QueueCapacity)
+	require.Equal(t, DefaultBlockThreshold, storage.BlockThreshold)
+	require.Equal(t, DefaultFlagThreshold, storage.FlagThreshold)
+	require.Equal(t, DefaultBlockStatus, storage.BlockStatus)
+	require.Equal(t, DefaultBlockMessage, storage.BlockMessage)
 	require.Equal(t, AllScannerIDs, storage.Scanners)
 	require.True(t, storage.AllGroups)
 }
@@ -435,6 +516,25 @@ func TestUpdateConfigStrictBoundsAndKnownValues(t *testing.T) {
 		{name: "worker high", mutate: func(req *UpdateConfigRequest) { req.WorkerCount = MaxWorkerCount + 1 }, reason: "prompt_audit_invalid_worker_count"},
 		{name: "capacity low", mutate: func(req *UpdateConfigRequest) { req.QueueCapacity = 0 }, reason: "prompt_audit_invalid_queue_capacity"},
 		{name: "capacity high", mutate: func(req *UpdateConfigRequest) { req.QueueCapacity = MaxQueueCapacity + 1 }, reason: "prompt_audit_invalid_queue_capacity"},
+		{name: "block threshold unknown", mutate: func(req *UpdateConfigRequest) { req.BlockThreshold = "Maybe" }, reason: "prompt_audit_invalid_block_threshold"},
+		{name: "flag threshold unknown", mutate: func(req *UpdateConfigRequest) { req.FlagThreshold = "Maybe" }, reason: "prompt_audit_invalid_flag_threshold"},
+		{name: "threshold order", mutate: func(req *UpdateConfigRequest) { req.BlockThreshold = "Controversial"; req.FlagThreshold = "Unsafe" }, reason: "prompt_audit_invalid_threshold_order"},
+		{name: "unknown category threshold", mutate: func(req *UpdateConfigRequest) {
+			req.CategoryThresholds = map[string]CategoryThresholdConfig{"made_up": {BlockThreshold: "Unsafe"}}
+		}, reason: "prompt_audit_invalid_category_threshold"},
+		{name: "category block threshold", mutate: func(req *UpdateConfigRequest) {
+			req.CategoryThresholds = map[string]CategoryThresholdConfig{"pii": {BlockThreshold: "Maybe"}}
+		}, reason: "prompt_audit_invalid_category_block_threshold"},
+		{name: "category flag threshold", mutate: func(req *UpdateConfigRequest) {
+			req.CategoryThresholds = map[string]CategoryThresholdConfig{"pii": {FlagThreshold: "Maybe"}}
+		}, reason: "prompt_audit_invalid_category_flag_threshold"},
+		{name: "category threshold order", mutate: func(req *UpdateConfigRequest) {
+			req.CategoryThresholds = map[string]CategoryThresholdConfig{"pii": {BlockThreshold: "Controversial", FlagThreshold: "Unsafe"}}
+		}, reason: "prompt_audit_invalid_category_threshold_order"},
+		{name: "block status low", mutate: func(req *UpdateConfigRequest) { req.BlockStatus = 399 }, reason: "prompt_audit_invalid_block_status"},
+		{name: "block status high", mutate: func(req *UpdateConfigRequest) { req.BlockStatus = 500 }, reason: "prompt_audit_invalid_block_status"},
+		{name: "block message empty", mutate: func(req *UpdateConfigRequest) { req.BlockMessage = "  " }, reason: "prompt_audit_invalid_block_message"},
+		{name: "block message long", mutate: func(req *UpdateConfigRequest) { req.BlockMessage = strings.Repeat("字", MaxBlockMessageRunes+1) }, reason: "prompt_audit_invalid_block_message"},
 		{name: "unknown scanner", mutate: func(req *UpdateConfigRequest) { req.Scanners = []string{"made_up"} }, reason: "prompt_audit_invalid_scanner"},
 		{name: "group required", mutate: func(req *UpdateConfigRequest) { req.AllGroups = false; req.GroupIDs = nil }, reason: "prompt_audit_groups_required"},
 		{name: "group positive", mutate: func(req *UpdateConfigRequest) { req.AllGroups = false; req.GroupIDs = []int64{0} }, reason: "prompt_audit_invalid_group"},

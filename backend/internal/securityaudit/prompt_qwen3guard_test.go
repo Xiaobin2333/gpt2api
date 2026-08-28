@@ -54,6 +54,80 @@ func TestParseQwen3GuardIgnoresAuxiliaryResponseFields(t *testing.T) {
 	require.NotContains(t, string(serialized), "No")
 }
 
+func TestThresholdPolicyUsesNativeSafetyLevelsAndScannerScope(t *testing.T) {
+	tests := []struct {
+		name           string
+		result         NormalizedResult
+		flagThreshold  string
+		blockThreshold string
+		decision       EventDecision
+		risk           RiskLevel
+		action         Action
+	}{
+		{name: "default controversial flags", result: NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}}, flagThreshold: "Controversial", blockThreshold: "Unsafe", decision: EventFlag, risk: RiskMedium, action: ActionWarn},
+		{name: "controversial block level blocks controversial", result: NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}}, flagThreshold: "Safe", blockThreshold: "Controversial", decision: EventCritical, risk: RiskCritical, action: ActionBlock},
+		{name: "unsafe flag level allows controversial", result: NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}}, flagThreshold: "Unsafe", blockThreshold: "Unsafe", decision: EventPass, risk: RiskLow, action: ActionAllow},
+		{name: "unsafe enabled category blocks", result: NormalizedResult{Safety: "Unsafe", Categories: []string{"jailbreak"}, MatchedScanners: []string{"jailbreak"}}, flagThreshold: "Controversial", blockThreshold: "Unsafe", decision: EventCritical, risk: RiskCritical, action: ActionBlock},
+		{name: "unsafe disabled known category only flags", result: NormalizedResult{Safety: "Unsafe", Categories: []string{"jailbreak"}}, flagThreshold: "Controversial", blockThreshold: "Unsafe", decision: EventFlag, risk: RiskHigh, action: ActionWarn},
+		{name: "unsafe unknown category blocks", result: NormalizedResult{Safety: "Unsafe", UnknownCategories: []string{"unknown:1234"}}, flagThreshold: "Controversial", blockThreshold: "Unsafe", decision: EventCritical, risk: RiskCritical, action: ActionBlock},
+		{name: "safe threshold is honored", result: NormalizedResult{Safety: "Safe"}, flagThreshold: "Safe", blockThreshold: "Safe", decision: EventCritical, risk: RiskCritical, action: ActionBlock},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyThresholdPolicy(&tt.result, tt.flagThreshold, tt.blockThreshold, nil)
+			require.Equal(t, tt.decision, tt.result.Decision)
+			require.Equal(t, tt.risk, tt.result.RiskLevel)
+			require.Equal(t, tt.action, tt.result.Action)
+		})
+	}
+}
+
+func TestThresholdPolicySupportsPerCategoryOverrides(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     NormalizedResult
+		thresholds map[string]CategoryThresholdConfig
+		decision   EventDecision
+	}{
+		{
+			name:       "compatibility pii override blocks controversial",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}},
+			thresholds: DefaultCategoryThresholds(), decision: EventCritical,
+		},
+		{
+			name:       "violent inherits global and flags controversial",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"violent"}, MatchedScanners: []string{"violent"}},
+			thresholds: DefaultCategoryThresholds(), decision: EventFlag,
+		},
+		{
+			name:       "violent block override blocks controversial",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"violent"}, MatchedScanners: []string{"violent"}},
+			thresholds: map[string]CategoryThresholdConfig{"violent": {BlockThreshold: "Controversial"}}, decision: EventCritical,
+		},
+		{
+			name:       "cleared pii override inherits global",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}, MatchedScanners: []string{"pii"}},
+			thresholds: map[string]CategoryThresholdConfig{}, decision: EventFlag,
+		},
+		{
+			name:       "strictest matching category wins",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"violent", "pii"}, MatchedScanners: []string{"violent", "pii"}},
+			thresholds: map[string]CategoryThresholdConfig{"violent": {FlagThreshold: "Unsafe"}, "pii": {BlockThreshold: "Controversial"}}, decision: EventCritical,
+		},
+		{
+			name:       "disabled category override cannot block",
+			result:     NormalizedResult{Safety: "Controversial", Categories: []string{"pii"}},
+			thresholds: map[string]CategoryThresholdConfig{"pii": {BlockThreshold: "Controversial"}}, decision: EventFlag,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyThresholdPolicy(&tt.result, DefaultFlagThreshold, DefaultBlockThreshold, tt.thresholds)
+			require.Equal(t, tt.decision, tt.result.Decision)
+		})
+	}
+}
+
 func TestQwen3GuardOfficialCategoriesAliasesAndUnknownAreStable(t *testing.T) {
 	official := "Violent, Non-violent Illegal Acts, Sexual Content or Sexual Acts, PII, Suicide & Self-Harm, Unethical Acts, Politically Sensitive Topics, Copyright Violation, Jailbreak"
 	result, err := ParseQwen3Guard("Safety: Unsafe\nCategories: "+official, AllScannerIDs)

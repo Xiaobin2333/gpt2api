@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -111,12 +112,24 @@ func prioritize(legacy *LegacyDecision, prompt *PromptDecision) Decision {
 	}
 	switch prompt.Kind {
 	case DecisionBlock:
-		return Decision{Kind: DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: ErrorCodeBlocked,
-			ClientMessage: "提示词安全审计拒绝了该请求，请调整输入后重试", Legacy: legacy, Prompt: prompt}
+		status := prompt.HTTPStatus
+		if status < 400 || status > 499 {
+			status = DefaultBlockStatus
+		}
+		message := strings.TrimSpace(prompt.ClientMessage)
+		if message == "" {
+			message = DefaultBlockMessage
+		}
+		return Decision{Kind: DecisionBlock, HTTPStatus: status, ErrorCode: ErrorCodeBlocked,
+			ClientMessage: message, Legacy: legacy, Prompt: prompt}
 	case DecisionInvalid:
 		return Decision{Kind: DecisionInvalid, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: ErrorCodeInvalidResponse,
 			ClientMessage: "提示词安全审计暂时不可用，请稍后重试", Legacy: legacy, Prompt: prompt}
 	case DecisionUnavailable:
+		if prompt.AllowNextStage {
+			return Decision{Kind: DecisionUnavailable, HTTPStatus: http.StatusOK, ErrorCode: ErrorCodeUnavailable,
+				Legacy: legacy, Prompt: prompt, AllowNextStage: true}
+		}
 		return Decision{Kind: DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: ErrorCodeUnavailable,
 			ClientMessage: "提示词安全审计暂时不可用，请稍后重试", Legacy: legacy, Prompt: prompt}
 	case DecisionFlag:

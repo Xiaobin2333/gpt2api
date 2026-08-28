@@ -223,13 +223,20 @@ func setPromptAdminAudit(c *gin.Context, result, errorCode string, fields map[st
 
 func configAuditFields(request UpdateConfigRequest, saved *PublicConfig) map[string]any {
 	version := request.ExpectedConfigVersion
+	categoryThresholdCount := len(request.CategoryThresholds)
 	if saved != nil {
 		version = saved.ConfigVersion
+		categoryThresholdCount = len(saved.CategoryThresholds)
 	}
 	return map[string]any{
 		"enabled": request.Enabled, "blocking_enabled": request.BlockingEnabled,
-		"blocking_latest_turn_only": request.BlockingLatestTurnOnly,
-		"config_version":            version, "endpoint_count": len(request.Endpoints),
+		"blocking_latest_turn_only":  request.BlockingLatestTurnOnly,
+		"fail_open_on_guard_failure": request.FailOpenOnGuardFailure,
+		"block_threshold":            request.BlockThreshold,
+		"flag_threshold":             request.FlagThreshold,
+		"category_threshold_count":   categoryThresholdCount,
+		"block_status":               request.BlockStatus,
+		"config_version":             version, "endpoint_count": len(request.Endpoints),
 		"scanner_count": len(request.Scanners), "all_groups": request.AllGroups,
 		"group_count": len(request.GroupIDs),
 	}

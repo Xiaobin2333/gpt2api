@@ -1,6 +1,14 @@
 export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
+export type PromptAuditSafety = 'Safe' | 'Controversial' | 'Unsafe'
 export type PromptDecision = 'pass' | 'flag' | 'critical'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
+
+export interface PromptAuditCategoryThreshold {
+  block_threshold?: PromptAuditSafety
+  flag_threshold?: PromptAuditSafety
+}
+
+export type PromptAuditCategoryThresholds = Record<string, PromptAuditCategoryThreshold>
 
 export interface PromptAuditEndpoint {
   id: string
@@ -24,6 +32,12 @@ export interface PromptAuditConfig {
   enabled: boolean
   blocking_enabled: boolean
   blocking_latest_turn_only: boolean
+  fail_open_on_guard_failure: boolean
+  block_threshold: PromptAuditSafety
+  flag_threshold: PromptAuditSafety
+  category_thresholds: PromptAuditCategoryThresholds
+  block_status: number
+  block_message: string
   store_pass_events: boolean
   effective_mode: PromptAuditMode
   strategy: 'priority'
@@ -48,6 +62,12 @@ export interface PromptAuditUpdateRequest {
   enabled: boolean
   blocking_enabled: boolean
   blocking_latest_turn_only: boolean
+  fail_open_on_guard_failure: boolean
+  block_threshold: PromptAuditSafety
+  flag_threshold: PromptAuditSafety
+  category_thresholds: PromptAuditCategoryThresholds
+  block_status: number
+  block_message: string
   store_pass_events: boolean
   strategy: 'priority'
   worker_count: number

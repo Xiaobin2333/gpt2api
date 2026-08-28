@@ -19,7 +19,9 @@ vi.mock('vue-i18n', async () => {
 })
 
 const baseConfig = (): PromptAuditConfig => ({
-  enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+  enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, fail_open_on_guard_failure: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+  block_threshold: 'Unsafe', flag_threshold: 'Controversial', block_status: 403, block_message: 'blocked',
+  category_thresholds: { pii: { block_threshold: 'Controversial' }, suicide_and_self_harm: { block_threshold: 'Controversial' }, jailbreak: { block_threshold: 'Controversial' } },
   worker_count: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: true, group_ids: [],
   endpoints: [{ id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', base_url: 'http://127.0.0.1:8000', model: 'guard-model', timeout_ms: 3000, input_limit: 4000, enabled: true, has_token: true, token_status: 'configured' }],
   config_version: 7, updated_at: '2026-07-16T00:00:00Z', updated_by: 1, change_summary: '{}',
@@ -128,11 +130,14 @@ describe('PromptAuditView', () => {
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes('aria-checked')).toBe('true')
     await wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').trigger('click')
     expect(wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-test="fail-open-on-guard-failure-toggle"]').trigger('click')
+    expect(wrapper.get('[data-test="fail-open-on-guard-failure-toggle"]').attributes('aria-checked')).toBe('true')
     await wrapper.get('[data-test="enabled-toggle"]').trigger('click')
     expect(wrapper.get('[data-test="enabled-toggle"]').attributes('aria-checked')).toBe('false')
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes('aria-checked')).toBe('false')
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes()).toHaveProperty('disabled')
     expect(wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').attributes()).toHaveProperty('disabled')
+    expect(wrapper.get('[data-test="fail-open-on-guard-failure-toggle"]').attributes()).toHaveProperty('disabled')
   })
 
   it('clears plaintext token state after a successful save', async () => {
@@ -178,7 +183,7 @@ describe('PromptAuditView', () => {
     await flushPromises()
     await wrapper.get('[data-test="tab-config"]').trigger('click')
     const switches = wrapper.findAll('[role="switch"]')
-    expect(switches).toHaveLength(4)
+    expect(switches).toHaveLength(5)
     expect(switches.every((item) => Boolean(item.attributes('aria-label')))).toBe(true)
     expect(wrapper.html()).toContain('fixed inset-x-0 bottom-0')
     expect(wrapper.html()).toContain('flex-wrap')

@@ -348,9 +348,17 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 	for _, endpoint := range current.Endpoints {
 		currentByID[endpoint.ID] = endpoint
 	}
+	categoryThresholds := req.CategoryThresholds
+	if categoryThresholds == nil {
+		categoryThresholds = current.CategoryThresholds
+	}
 	next := storageConfig{
-		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled, BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
-		Strategy: strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
+		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled, BlockingLatestTurnOnly: req.BlockingLatestTurnOnly,
+		FailOpenOnGuardFailure: req.FailOpenOnGuardFailure, BlockThreshold: req.BlockThreshold,
+		FlagThreshold: req.FlagThreshold, CategoryThresholds: cloneCategoryThresholds(categoryThresholds),
+		BlockStatus: req.BlockStatus, BlockMessage: strings.TrimSpace(req.BlockMessage),
+		StorePassEvents: req.StorePassEvents,
+		Strategy:        strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
 		QueueCapacity: req.QueueCapacity, Scanners: append([]string(nil), req.Scanners...),
 		AllGroups: req.AllGroups, GroupIDs: append([]int64(nil), req.GroupIDs...),
 		ConfigVersion: current.ConfigVersion, UpdatedBy: actorID,
@@ -516,6 +524,7 @@ func (m *ConfigManager) clearLoadError() bool {
 }
 
 func cloneStorageConfig(cfg storageConfig) storageConfig {
+	cfg.CategoryThresholds = cloneCategoryThresholds(cfg.CategoryThresholds)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	cfg.Endpoints = append([]StorageEndpoint(nil), cfg.Endpoints...)
@@ -523,6 +532,7 @@ func cloneStorageConfig(cfg storageConfig) storageConfig {
 }
 
 func cloneActiveConfig(cfg ActiveConfig) ActiveConfig {
+	cfg.CategoryThresholds = cloneCategoryThresholds(cfg.CategoryThresholds)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	cfg.Endpoints = append([]ActiveEndpoint(nil), cfg.Endpoints...)

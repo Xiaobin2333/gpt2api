@@ -67,7 +67,9 @@ describe('Prompt Audit components', () => {
 
   it('supports group search, stale configured groups, nine scanners, and bounded worker inputs', async () => {
     const draft: PromptAuditDraft = {
-      enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+      enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, fail_open_on_guard_failure: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+      block_threshold: 'Unsafe', flag_threshold: 'Controversial', block_status: 403, block_message: 'blocked',
+      category_thresholds: { pii: { block_threshold: 'Controversial' }, suicide_and_self_harm: { block_threshold: 'Controversial' }, jailbreak: { block_threshold: 'Controversial' } },
       worker_count: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: false, group_ids: [1, 99],
       endpoints: [endpoint()], config_version: 1, updated_at: '', updated_by: 0, change_summary: '',
     }
@@ -76,12 +78,33 @@ describe('Prompt Audit components', () => {
     })
     expect(wrapper.text()).toContain('99')
     expect(wrapper.findAll('input[type="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(9)
+    expect(wrapper.findAll('[data-test^="category-block-"]')).toHaveLength(9)
+    expect(wrapper.findAll('[data-test^="category-flag-"]')).toHaveLength(9)
+    expect(wrapper.get<HTMLSelectElement>('[data-test="category-block-pii"]').element.value).toBe('Controversial')
     await wrapper.get('[aria-label="admin.promptAudit.policy.searchGroups"]').setValue('Beta')
     expect(wrapper.text()).toContain('Beta')
     expect(wrapper.text()).not.toContain('Alpha')
     await wrapper.get('[aria-label="admin.promptAudit.policy.workerCount"]').setValue('6')
-    const emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    let emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
     expect(emitted.worker_count).toBe(6)
+    await wrapper.get('[aria-label="admin.promptAudit.policy.blockThreshold"]').setValue('Controversial')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.block_threshold).toBe('Controversial')
+    await wrapper.get('[aria-label="admin.promptAudit.policy.flagThreshold"]').setValue('Safe')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.flag_threshold).toBe('Safe')
+    await wrapper.get('[data-test="category-block-violent"]').setValue('Controversial')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.category_thresholds.violent).toEqual({ block_threshold: 'Controversial' })
+    await wrapper.get('[data-test="category-block-pii"]').setValue('')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.category_thresholds.pii).toBeUndefined()
+    await wrapper.get('[aria-label="admin.promptAudit.policy.blockStatus"]').setValue('422')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.block_status).toBe(422)
+    await wrapper.get('[aria-label="admin.promptAudit.policy.blockMessage"]').setValue('custom block')
+    emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(emitted.block_message).toBe('custom block')
   })
 
   it('keeps identity fields separate, supports selection, and opens filter deletion from the toolbar', async () => {

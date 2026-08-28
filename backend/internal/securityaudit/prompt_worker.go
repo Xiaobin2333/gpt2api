@@ -167,6 +167,7 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 			r.observeAsyncFailure(scanErr, r.clock.Now().Sub(started))
 			return r.finishFailure(ctx, job, scanErr)
 		}
+		applyThresholdPolicy(result, cfg.FlagThreshold, cfg.BlockThreshold, cfg.CategoryThresholds)
 		results = append(results, result)
 		LogInfo(EventChunkCompleted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "guard_endpoint_id": result.GuardEndpointID, "action": result.Action, "latency_ms": r.clock.Now().Sub(chunkStarted).Milliseconds(), "status": "completed"}))
 		if result.Action == ActionBlock {

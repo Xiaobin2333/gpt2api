@@ -209,8 +209,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body); decision != nil && !decision.AllowNextStage {
+	interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
+	deferPromptGuardForProbe := interceptType == InterceptTypeMaxTokensOneHaiku
+	securityAuditChecked := false
+	runSecurityAuditBeforeUpstream := func() bool {
+		if securityAuditChecked {
+			return true
+		}
+		securityAuditChecked = true
+		decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body)
+		if decision == nil || decision.AllowNextStage {
+			return true
+		}
 		h.anthropicSecurityAuditError(c, decision)
+		return false
+	}
+	if !deferPromptGuardForProbe && !runSecurityAuditBeforeUpstream() {
 		return
 	}
 
@@ -358,8 +372,17 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
-				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
+					if deferPromptGuardForProbe {
+						legacyDecision := runContentModeration(c, reqLog, h.contentModerationService, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body)
+						if legacyDecision != nil && legacyDecision.Blocked {
+							if selection.Acquired && selection.ReleaseFunc != nil {
+								selection.ReleaseFunc()
+							}
+							h.errorResponse(c, contentModerationStatus(legacyDecision), contentModerationErrorCode(legacyDecision), legacyDecision.Message)
+							return
+						}
+					}
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}
@@ -370,6 +393,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					}
 					return
 				}
+			}
+			if deferPromptGuardForProbe && !runSecurityAuditBeforeUpstream() {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				return
 			}
 
 			// 3. 获取账号并发槽位
@@ -681,8 +710,17 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
-				interceptType := detectInterceptType(body, reqModel, parsedReq.MaxTokens, isClaudeCodeClient)
 				if interceptType != InterceptTypeNone {
+					if deferPromptGuardForProbe {
+						legacyDecision := runContentModeration(c, reqLog, h.contentModerationService, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, reqModel, body)
+						if legacyDecision != nil && legacyDecision.Blocked {
+							if selection.Acquired && selection.ReleaseFunc != nil {
+								selection.ReleaseFunc()
+							}
+							h.errorResponse(c, contentModerationStatus(legacyDecision), contentModerationErrorCode(legacyDecision), legacyDecision.Message)
+							return
+						}
+					}
 					if selection.Acquired && selection.ReleaseFunc != nil {
 						selection.ReleaseFunc()
 					}
@@ -693,6 +731,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					}
 					return
 				}
+			}
+			if deferPromptGuardForProbe && !runSecurityAuditBeforeUpstream() {
+				if selection.Acquired && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				return
 			}
 
 			// 3. 获取账号并发槽位

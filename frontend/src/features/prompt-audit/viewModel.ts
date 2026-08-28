@@ -1,12 +1,24 @@
 import type {
   PromptAuditConfig,
+  PromptAuditCategoryThresholds,
   PromptAuditDraft,
   PromptAuditEndpointDraft,
+  PromptAuditSafety,
   PromptAuditUpdateRequest,
   PromptEventFilters,
 } from './types'
 
 export const DEFAULT_GUARD_MODEL = 'sileader/qwen3guard:0.6b'
+export const SAFETY_LEVELS = ['Safe', 'Controversial', 'Unsafe'] as const satisfies readonly PromptAuditSafety[]
+export const DEFAULT_BLOCK_THRESHOLD: PromptAuditSafety = 'Unsafe'
+export const DEFAULT_FLAG_THRESHOLD: PromptAuditSafety = 'Controversial'
+export const DEFAULT_CATEGORY_THRESHOLDS: PromptAuditCategoryThresholds = {
+  pii: { block_threshold: 'Controversial' },
+  suicide_and_self_harm: { block_threshold: 'Controversial' },
+  jailbreak: { block_threshold: 'Controversial' },
+}
+export const DEFAULT_BLOCK_STATUS = 403
+export const DEFAULT_BLOCK_MESSAGE = '请检查你的提示词，本次请求被审计系统拦截。'
 
 export const SCANNER_CATALOG = [
   { id: 'violent', label: 'Violent' },
@@ -30,6 +42,11 @@ export function cloneData<T>(value: T): T {
 export function configToDraft(config: PromptAuditConfig): PromptAuditDraft {
   return {
     ...cloneData(config),
+    block_threshold: safetyLevelOrDefault(config.block_threshold, DEFAULT_BLOCK_THRESHOLD),
+    flag_threshold: safetyLevelOrDefault(config.flag_threshold, DEFAULT_FLAG_THRESHOLD),
+    category_thresholds: normalizeCategoryThresholds(config.category_thresholds),
+    block_status: Number.isInteger(config.block_status) ? config.block_status : DEFAULT_BLOCK_STATUS,
+    block_message: config.block_message?.trim() || DEFAULT_BLOCK_MESSAGE,
     group_ids: [...(config.group_ids ?? [])],
     scanners: [...(config.scanners ?? [])],
     endpoints: (config.endpoints ?? []).map((endpoint) => ({
@@ -63,6 +80,12 @@ export function buildUpdateRequest(draft: PromptAuditDraft): PromptAuditUpdateRe
     enabled: draft.enabled,
     blocking_enabled: draft.enabled && draft.blocking_enabled,
     blocking_latest_turn_only: draft.blocking_latest_turn_only,
+    fail_open_on_guard_failure: draft.fail_open_on_guard_failure,
+    block_threshold: draft.block_threshold,
+    flag_threshold: draft.flag_threshold,
+    category_thresholds: normalizeCategoryThresholds(draft.category_thresholds, false),
+    block_status: Number(draft.block_status),
+    block_message: draft.block_message.trim(),
     store_pass_events: draft.store_pass_events,
     strategy: 'priority',
     worker_count: Number(draft.worker_count),
@@ -83,6 +106,29 @@ export function buildUpdateRequest(draft: PromptAuditDraft): PromptAuditUpdateRe
       enabled: endpoint.enabled,
     })),
   }
+}
+
+function safetyLevelOrDefault(value: unknown, fallback: PromptAuditSafety): PromptAuditSafety {
+  return SAFETY_LEVELS.includes(value as PromptAuditSafety) ? (value as PromptAuditSafety) : fallback
+}
+
+function normalizeCategoryThresholds(value: unknown, useCompatibilityDefaults = true): PromptAuditCategoryThresholds {
+  const source = value && typeof value === 'object'
+    ? value as Record<string, { block_threshold?: unknown; flag_threshold?: unknown }>
+    : useCompatibilityDefaults ? DEFAULT_CATEGORY_THRESHOLDS : {}
+  const normalized: PromptAuditCategoryThresholds = {}
+  for (const scanner of SCANNER_CATALOG) {
+    const thresholds = source[scanner.id]
+    if (!thresholds || typeof thresholds !== 'object') continue
+    const block = SAFETY_LEVELS.includes(thresholds.block_threshold as PromptAuditSafety)
+      ? thresholds.block_threshold as PromptAuditSafety
+      : undefined
+    const flag = SAFETY_LEVELS.includes(thresholds.flag_threshold as PromptAuditSafety)
+      ? thresholds.flag_threshold as PromptAuditSafety
+      : undefined
+    if (block || flag) normalized[scanner.id] = { block_threshold: block, flag_threshold: flag }
+  }
+  return normalized
 }
 
 export function draftFingerprint(draft: PromptAuditDraft | null): string {

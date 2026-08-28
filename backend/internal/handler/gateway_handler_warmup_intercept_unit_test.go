@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -155,6 +156,31 @@ func (f *fakeConcurrencyCache) GetAccountConcurrencyBatch(_ context.Context, acc
 func (f *fakeConcurrencyCache) CleanupExpiredAccountSlots(context.Context, int64) error { return nil }
 func (f *fakeConcurrencyCache) CleanupExpiredAccountSlotKeys(context.Context) error     { return nil }
 func (f *fakeConcurrencyCache) CleanupStaleProcessSlots(context.Context, string) error  { return nil }
+
+type probeInterceptSettingRepo struct {
+	service.SettingRepository
+}
+
+func (probeInterceptSettingRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+type probeInterceptPromptEngine struct {
+	evaluated int
+}
+
+func (e *probeInterceptPromptEngine) EffectiveMode() securityaudit.Mode {
+	return securityaudit.ModeBlocking
+}
+func (e *probeInterceptPromptEngine) Enqueue(context.Context, securityaudit.Request) error {
+	return nil
+}
+func (e *probeInterceptPromptEngine) Evaluate(context.Context, securityaudit.Request) (*securityaudit.PromptDecision, error) {
+	e.evaluated++
+	return &securityaudit.PromptDecision{
+		Kind: securityaudit.DecisionBlock, ErrorCode: securityaudit.ErrorCodeBlocked, AllowNextStage: false,
+	}, nil
+}
 
 func newTestGatewayHandler(t *testing.T, group *service.Group, accounts []*service.Account) (*GatewayHandler, func()) {
 	t.Helper()
@@ -299,6 +325,72 @@ func TestGatewayHandlerMessages_InterceptWarmup_AntigravityAccount_MixedScheduli
 	first, ok := content[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "New Conversation", first["text"])
+}
+
+func TestGatewayHandlerMessages_ProbeBypassesPromptGuardOnlyWhenLocallyIntercepted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name             string
+		interceptEnabled bool
+		wantStatus       int
+		wantEvaluated    int
+	}{
+		{name: "local probe bypasses prompt guard", interceptEnabled: true, wantStatus: 200, wantEvaluated: 0},
+		{name: "non intercepted probe is audited", interceptEnabled: false, wantStatus: 403, wantEvaluated: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			groupID := int64(2101)
+			accountID := int64(1101)
+			group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
+			account := &service.Account{
+				ID: accountID, Name: "probe-account", Platform: service.PlatformAnthropic, Type: service.AccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token":              "tok_probe",
+					"intercept_warmup_requests": test.interceptEnabled,
+				},
+				Concurrency: 1, Priority: 1, Status: service.StatusActive, Schedulable: true,
+				AccountGroups: []service.AccountGroup{{AccountID: accountID, GroupID: groupID}},
+			}
+
+			h, cleanup := newTestGatewayHandler(t, group, []*service.Account{account})
+			defer cleanup()
+			h.settingService = service.NewSettingService(probeInterceptSettingRepo{}, &config.Config{})
+			prompt := &probeInterceptPromptEngine{}
+			h.securityAuditCoordinator = securityaudit.NewCoordinator(nil, prompt)
+
+			body := []byte(`{
+				"model":"claude-haiku-4-5",
+				"max_tokens":1,
+				"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}],
+				"metadata":{"user_id":"user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_account__session_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+				"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]
+			}`)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			request := httptest.NewRequest("POST", "/v1/messages", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("User-Agent", "claude-cli/1.0.1")
+			request.Header.Set("X-App", "claude-code")
+			request.Header.Set("anthropic-beta", "message-batches-2024-09-24")
+			request.Header.Set("anthropic-version", "2023-06-01")
+			c.Request = request.WithContext(context.WithValue(request.Context(), ctxkey.Group, group))
+
+			apiKey := &service.APIKey{
+				ID: 3101, UserID: 4101, GroupID: &groupID, Status: service.StatusActive,
+				User: &service.User{ID: 4101, Concurrency: 10, Balance: 100}, Group: group,
+			}
+			c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.UserID, Concurrency: 10})
+
+			h.Messages(c)
+
+			require.Equal(t, test.wantStatus, recorder.Code)
+			require.Equal(t, test.wantEvaluated, prompt.evaluated)
+			if test.interceptEnabled {
+				require.Contains(t, recorder.Body.String(), `"text":"#"`)
+			}
+		})
+	}
 }
 
 func TestGatewayHandlerMessages_InterceptWarmup_AntigravityAccount_ForcePlatform(t *testing.T) {

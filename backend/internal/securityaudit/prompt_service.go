@@ -163,7 +163,19 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	if err != nil {
 		return nil, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err}
 	}
-	return s.evaluator.Evaluate(ctx, cfg, snapshot)
+	decision, err := s.evaluator.Evaluate(ctx, cfg, snapshot)
+	if err == nil {
+		if decision != nil && decision.Kind == DecisionBlock {
+			decision.HTTPStatus = cfg.BlockStatus
+			decision.ClientMessage = cfg.BlockMessage
+		}
+		return decision, nil
+	}
+	var guardErr *GuardError
+	if cfg.FailOpenOnGuardFailure && errors.As(err, &guardErr) && guardErr.Code == ErrorCodeUnavailable {
+		return &PromptDecision{Kind: DecisionUnavailable, ErrorCode: ErrorCodeUnavailable, AllowNextStage: true}, nil
+	}
+	return nil, err
 }
 
 func (s *PromptService) GetConfig() (PublicConfig, error) { return s.config.Public() }
@@ -345,8 +357,8 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 	if limit == 0 {
 		limit = DefaultInputLimit
 	}
-	storage := storageConfig{Enabled: false, Strategy: "priority", WorkerCount: DefaultWorkerCount, QueueCapacity: DefaultQueueCapacity, Scanners: append([]string(nil), AllScannerIDs...), AllGroups: true,
-		Endpoints: []StorageEndpoint{{ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name), Protocol: "openai_compatible", BaseURL: baseURL, Model: model, TimeoutMS: timeout, InputLimit: limit}}}
+	storage := DefaultStorageConfig()
+	storage.Endpoints = []StorageEndpoint{{ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name), Protocol: "openai_compatible", BaseURL: baseURL, Model: model, TimeoutMS: timeout, InputLimit: limit}}
 	if storage.Endpoints[0].ID == "" {
 		storage.Endpoints[0].ID = "probe"
 	}

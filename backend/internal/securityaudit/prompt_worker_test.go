@@ -234,7 +234,9 @@ func (s *fakePayloadStore) Ping(context.Context) error { return s.pingErr }
 func asyncConfig() ActiveConfig {
 	return ActiveConfig{
 		RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, Strategy: "priority",
-		WorkerCount: 1, QueueCapacity: 8, Scanners: []string{"pii"}, AllGroups: true, ConfigVersion: 7,
+		BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold,
+		BlockStatus: DefaultBlockStatus, BlockMessage: DefaultBlockMessage,
+		WorkerCount: 1, QueueCapacity: 8, Scanners: []string{"pii", "jailbreak"}, AllGroups: true, ConfigVersion: 7,
 		Endpoints: []ActiveEndpoint{{ID: "guard", Enabled: true, TimeoutMS: 1000, InputLimit: 3}},
 	}
 }
@@ -531,7 +533,7 @@ func TestPromptAuditSyntheticAsyncBaseline(t *testing.T) {
 			return &NormalizedResult{Decision: EventFlag, RiskLevel: RiskMedium, Action: ActionWarn, Safety: "Controversial", Categories: []string{"politically_sensitive_topics"}, GuardEndpointID: endpoint.ID}, nil
 		case strings.HasPrefix(chunk, "block"):
 			knownMaliciousBlocked++
-			return &NormalizedResult{Decision: EventCritical, RiskLevel: RiskCritical, Action: ActionBlock, Safety: "Unsafe", Categories: []string{"jailbreak"}, GuardEndpointID: endpoint.ID}, nil
+			return &NormalizedResult{Decision: EventCritical, RiskLevel: RiskCritical, Action: ActionBlock, Safety: "Unsafe", Categories: []string{"jailbreak"}, MatchedScanners: []string{"jailbreak"}, GuardEndpointID: endpoint.ID}, nil
 		case strings.HasPrefix(chunk, "invalid"):
 			return nil, &GuardError{Code: ErrorCodeInvalidResponse}
 		default:

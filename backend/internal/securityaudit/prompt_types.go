@@ -142,6 +142,8 @@ type NormalizedResult struct {
 type PromptDecision struct {
 	Kind           DecisionKind      `json:"kind"`
 	ErrorCode      string            `json:"error_code,omitempty"`
+	HTTPStatus     int               `json:"http_status,omitempty"`
+	ClientMessage  string            `json:"client_message,omitempty"`
 	Result         *NormalizedResult `json:"result,omitempty"`
 	AllowNextStage bool              `json:"allow_next_stage"`
 }

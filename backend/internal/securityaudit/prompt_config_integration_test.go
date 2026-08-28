@@ -118,6 +118,8 @@ func promptAuditTestEncryptor(t *testing.T) service.SecretEncryptor {
 func promptAuditUpdateRequest(version int64, workerCount int, token string) UpdateConfigRequest {
 	return UpdateConfigRequest{
 		ExpectedConfigVersion: version, Enabled: true, BlockingEnabled: false, StorePassEvents: false,
+		BlockThreshold: DefaultBlockThreshold, FlagThreshold: DefaultFlagThreshold,
+		BlockStatus: DefaultBlockStatus, BlockMessage: DefaultBlockMessage,
 		Strategy: "priority", WorkerCount: workerCount, QueueCapacity: 64, Scanners: []string{"pii", "jailbreak"},
 		AllGroups: true, Endpoints: []UpdateEndpoint{{
 			ID: "guard-one", Name: "Guard One", Protocol: "openai_compatible",
