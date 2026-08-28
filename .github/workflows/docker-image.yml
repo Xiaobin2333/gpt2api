@@ -53,6 +53,7 @@ jobs:
           build-args: |
             COMMIT=${{ github.sha }}
             DATE=${{ steps.image.outputs.build_date }}
+            ALPINE_MIRROR=https://mirrors.aliyun.com/alpine
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:main
