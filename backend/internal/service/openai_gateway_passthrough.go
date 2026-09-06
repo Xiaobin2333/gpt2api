@@ -536,6 +536,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	forwardResult := &OpenAIForwardResult{
 		RequestID:                     resp.Header.Get("x-request-id"),
+		UpstreamHeaders:               resp.Header,
 		ResponseID:                    responseID,
 		Usage:                         *usage,
 		Model:                         reqModel,
@@ -724,6 +725,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	applyOpenCodeSessionHeader(c, account, targetURL, req.Header)
 	// 仅原生 v2 压缩回合补齐 remote_compaction_v2；普通请求保留客户端能力集。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
