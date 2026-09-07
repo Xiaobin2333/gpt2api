@@ -24,7 +24,10 @@ const (
 	openAIWSHTTPBridgeErrorBodyLimitBytes         = 64 * 1024
 )
 
-const openAIWSHTTPBridgeToolStateContextKey = "openai_ws_http_bridge_tool_state"
+const (
+	openAIWSHTTPBridgeToolStateContextKey = "openai_ws_http_bridge_tool_state"
+	openAIWSHTTPBridgeTurnStateContextKey = "openai_ws_http_bridge_turn_state"
+)
 
 type openAIWSHTTPBridgeToolState struct {
 	ClientMapping apicompat.ResponsesClientToolMapping
@@ -46,6 +49,25 @@ func setOpenAIWSHTTPBridgeToolState(c *gin.Context, state openAIWSHTTPBridgeTool
 	}
 	state.LoweredTools = append(json.RawMessage(nil), state.LoweredTools...)
 	c.Set(openAIWSHTTPBridgeToolStateContextKey, state)
+}
+
+func setOpenAIWSHTTPBridgeTurnState(c *gin.Context, state string) {
+	if c == nil {
+		return
+	}
+	c.Set(openAIWSHTTPBridgeTurnStateContextKey, strings.TrimSpace(state))
+}
+
+func openAIWSHTTPBridgeTurnStateFromContext(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	value, ok := c.Get(openAIWSHTTPBridgeTurnStateContextKey)
+	if !ok {
+		return ""
+	}
+	state, _ := value.(string)
+	return strings.TrimSpace(state)
 }
 
 func decodeOpenAIWSHTTPBridgeLoweredTools(raw json.RawMessage) []any {
@@ -509,6 +531,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		// This state was minted by the preceding HTTP bridge response on this
+		// connection. Reapply it after the generic client-echo provenance guard;
+		// it never enters the session-hash store or crosses account failover.
+		if bridgeTurnState := openAIWSHTTPBridgeTurnStateFromContext(c); bridgeTurnState != "" && account.UsesOpenAICodexProtocol() {
+			upstreamReq.Header.Set(openAIWSTurnStateHeader, bridgeTurnState)
+		}
 		if responsesLite {
 			upstreamReq.Header.Set(responsesLiteHeader, "true")
 		}
@@ -598,7 +626,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if upstreamMsg == "" {
 			upstreamMsg = http.StatusText(resp.StatusCode)
 		}
-		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		if account.Platform == PlatformGrok {
 			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
 			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.StatusCode, resp.Header, respBody)

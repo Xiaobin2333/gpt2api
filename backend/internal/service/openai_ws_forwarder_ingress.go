@@ -148,9 +148,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				forceHTTPBridge = true
 				break
 			}
-			// 透传 relay 通过 TurnStarted 记录每个 turn 的开始时刻，但不触发
-			// BeforeTurn；因此仍只有建连时的利润准入门，没有 turn 级复核。
-			// handler 计费在 turn 定价未冻结时回退到对应的 turn 开始时刻。
+			// 首轮准入由握手路径完成；后续 response.create 会在写入上游前
+			// 依次回调 BeforeRequest 和 BeforeTurn，并在终止或失败时回调
+			// AfterTurn，从而覆盖 turn 级利润复核、定价冻结和并发槽位释放。
 			return s.proxyResponsesWebSocketV2Passthrough(
 				ctx,
 				c,
@@ -552,6 +552,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return err
 	}
 
+	useHTTPBridge := forceHTTPBridge || s.shouldBridgeOpenAIWSHTTP(account, firstPayload.payloadBytes, firstPayload.previousResponseID)
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
@@ -563,11 +564,18 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
 		turnIdentity = resolveOpenAICodexTurnStateIdentity(c, payload.rawForHash).turnID
+		preferredConnID = ""
+		storeDisabled = s.isOpenAIWSStoreDisabledInRequestRaw(payload.payloadRaw, account)
 		clientProvidedTurnState := turnState != ""
 		if clientProvidedTurnState {
 			validated := http.Header{openAIWSTurnStateHeader: []string{turnState}}
 			s.guardOpenAICodexTurnStateEcho(c, account, validated)
 			turnState = strings.TrimSpace(validated.Get(openAIWSTurnStateHeader))
+		}
+		if useHTTPBridge {
+			// Sticky account affinity may be shared, but an HTTP bridge must not
+			// inherit another connection's native WS turn state or socket binding.
+			return
 		}
 		if stateStore != nil && sessionHash != "" {
 			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, account.ID, sessionHash, turnIdentity); ok {
@@ -582,14 +590,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 
-		preferredConnID = ""
 		if stateStore != nil && payload.previousResponseID != "" {
 			if connID, ok := stateStore.GetResponseConn(payload.previousResponseID); ok {
 				preferredConnID = connID
 			}
 		}
 
-		storeDisabled = s.isOpenAIWSStoreDisabledInRequestRaw(payload.payloadRaw, account)
 		if stateStore != nil && storeDisabled && payload.previousResponseID == "" && sessionHash != "" {
 			if connID, ok := stateStore.GetSessionConn(groupID, sessionHash); ok {
 				preferredConnID = connID
@@ -598,7 +604,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	refreshIngressRouteState(firstPayload)
 
-	if forceHTTPBridge || s.shouldBridgeOpenAIWSHTTP(account, firstPayload.payloadBytes, firstPayload.previousResponseID) {
+	if useHTTPBridge {
 		logOpenAIWSModeInfo(
 			"ingress_ws_http_bridge_start account_id=%d account_type=%s payload_bytes=%d threshold_bytes=%d has_session_hash=%v store_disabled=%v",
 			account.ID,
@@ -631,6 +637,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if turnState != "" && c != nil && c.Request != nil {
 				c.Request.Header.Set(openAIWSTurnStateHeader, turnState)
 			}
+			setOpenAIWSHTTPBridgeTurnState(c, turnState)
 			if c != nil && sessionHash != "" {
 				c.Set(openAIWSIngressSessionHashContextKey, sessionHash)
 			}
@@ -771,10 +778,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				bridgeAccountFailoverInputExists = true
 			}
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
+				// Follow-up turns on this bridge retain their own upstream state;
+				// publishing it by session hash would leak it to independent bridges.
 				turnState = bridgeTurnState
-				if stateStore != nil && sessionHash != "" {
-					stateStore.BindSessionTurnState(groupID, account.ID, sessionHash, turnIdentity, bridgeTurnState, s.openAIWSSessionStickyTTL())
-				}
 			}
 			responseID := strings.TrimSpace(result.RequestID)
 			if responseID != "" && stateStore != nil {
@@ -802,14 +808,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if parseErr != nil {
 				return parseErr
 			}
-			turnState = ""
-			if c != nil && c.Request != nil {
-				c.Request.Header.Del(openAIWSTurnStateHeader)
-			}
-			if stateStore != nil && sessionHash != "" {
-				stateStore.DeleteSessionTurnState(groupID, sessionHash)
-			}
-			turnIdentity = resolveOpenAICodexTurnStateIdentity(c, nextPayload.rawForHash).turnID
 			currentBridgePayload = nextPayload
 		}
 	}
