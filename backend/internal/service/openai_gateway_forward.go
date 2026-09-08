@@ -1508,7 +1508,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
 	if account.UsesOpenAICodexProtocol() {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
-		// Codex 0.149.1 的 HTTP Responses 请求不协商旧实验标记；只移除该
+		// Codex 0.153.4 的 HTTP Responses 请求不协商旧实验标记；只移除该
 		// token，保留客户端显式请求的其他独立 beta。WebSocket 在握手处使用
 		// responses_websockets=2026-02-06，不经过这里。
 		stripOpenAILegacyResponsesBeta(req.Header)

@@ -55,7 +55,7 @@ func TestApplyCodexOAuthRequestIdentityHeaders(t *testing.T) {
 	})
 }
 
-func TestCodexOAuth01491SynthesizesOfficialResponsesIdentity(t *testing.T) {
+func TestCodexOAuth01534SynthesizesOfficialResponsesIdentity(t *testing.T) {
 	t.Cleanup(func() { SetCodexFingerprintDeploymentSalt("") })
 	SetCodexFingerprintDeploymentSalt(strings.Repeat("a", 32))
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -97,6 +97,9 @@ func TestCodexOAuth01491SynthesizesOfficialResponsesIdentity(t *testing.T) {
 	require.Equal(t, ids.threadID, turnMetadata.Get("thread_id").String())
 	require.Equal(t, "/root", turnMetadata.Get("agent_name").String())
 	require.Equal(t, ids.turnID, turnMetadata.Get("turn_id").String())
+	require.Equal(t, ids.windowID, turnMetadata.Get("window_id").String())
+	require.Zero(t, turnMetadata.Get("window_number").Uint())
+	require.Equal(t, ids.contextWindowID, turnMetadata.Get("context_window_id").String())
 	require.Equal(t, "turn", turnMetadata.Get("request_kind").String())
 	require.Positive(t, turnMetadata.Get("turn_started_at_unix_ms").Int())
 
@@ -110,6 +113,8 @@ func TestCodexOAuth01491SynthesizesOfficialResponsesIdentity(t *testing.T) {
 	require.Equal(t, ids.windowID, headers.Get("x-codex-window-id"))
 	require.Empty(t, headers.Get("x-codex-installation-id"))
 	require.Equal(t, ids.turnID, gjson.Get(headers.Get(openAIWSTurnMetadataHeader), "turn_id").String())
+	require.Zero(t, gjson.Get(headers.Get(openAIWSTurnMetadataHeader), "window_number").Uint())
+	require.Equal(t, ids.contextWindowID, gjson.Get(headers.Get(openAIWSTurnMetadataHeader), "context_window_id").String())
 }
 
 func TestCodexCLI01534CanonicalIdentity(t *testing.T) {
@@ -117,6 +122,45 @@ func TestCodexCLI01534CanonicalIdentity(t *testing.T) {
 	require.Equal(t,
 		"codex-tui/0.153.4 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.153.4)",
 		codexCLIUserAgent,
+	)
+}
+
+func TestMarshalCodexTurnMetadata01534FieldOrder(t *testing.T) {
+	encoded, err := marshalCodexTurnMetadata(map[string]any{
+		"zzz_extra":                      "last",
+		"compaction":                     map[string]any{"trigger": "auto"},
+		"history_ingest_requested":       true,
+		"turn_started_at_unix_ms":        123,
+		"tool_namespaces_info":           map[string]any{"shell": "direct"},
+		"workspaces":                     map[string]any{"root": true},
+		"node_repl_disabled":             true,
+		"node_repl_auto_review_required": false,
+		"auto_review_enabled":            true,
+		"sandbox_mode":                   "workspace-write",
+		"sandbox":                        "seccomp",
+		"turn_trigger":                   "user",
+		"thread_source":                  "cli",
+		"subagent_kind":                  "review",
+		"root_turn_id":                   "root-turn",
+		"parent_turn_id":                 "parent-turn",
+		"parent_thread_id":               "parent-thread",
+		"forked_from_ordinal_exclusive":  3,
+		"forked_from_thread_id":          "fork-thread",
+		"request_kind":                   "turn",
+		"context_window_id":              "context-window",
+		"window_number":                  0,
+		"window_id":                      "thread:0",
+		"turn_id":                        "turn",
+		"agent_name":                     "/root",
+		"thread_id":                      "thread",
+		"session_id":                     "session",
+		"installation_id":                "installation",
+		"aaa_extra":                      "first",
+	})
+	require.NoError(t, err)
+	require.Equal(t,
+		`{"installation_id":"installation","session_id":"session","thread_id":"thread","agent_name":"/root","turn_id":"turn","window_id":"thread:0","window_number":0,"context_window_id":"context-window","request_kind":"turn","forked_from_thread_id":"fork-thread","forked_from_ordinal_exclusive":3,"parent_thread_id":"parent-thread","parent_turn_id":"parent-turn","root_turn_id":"root-turn","subagent_kind":"review","thread_source":"cli","turn_trigger":"user","sandbox":"seccomp","sandbox_mode":"workspace-write","auto_review_enabled":true,"node_repl_auto_review_required":false,"node_repl_disabled":true,"workspaces":{"root":true},"tool_namespaces_info":{"shell":"direct"},"turn_started_at_unix_ms":123,"history_ingest_requested":true,"compaction":{"trigger":"auto"},"aaa_extra":"first","zzz_extra":"last"}`,
+		encoded,
 	)
 }
 

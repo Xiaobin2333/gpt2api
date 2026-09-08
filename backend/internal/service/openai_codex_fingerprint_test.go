@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 const testCodexFingerprintSeed = "11111111-1111-4111-8111-111111111111"
@@ -183,6 +184,8 @@ func TestResolveCodexFingerprintIDsForWSTurnReusesFirstAndRotatesTurn(t *testing
 	require.Equal(t, first.installationID, followUp.installationID)
 	require.Equal(t, first.sessionID, followUp.sessionID)
 	require.Equal(t, first.threadID, followUp.threadID)
+	require.Equal(t, first.windowNumber, followUp.windowNumber)
+	require.Equal(t, first.contextWindowID, followUp.contextWindowID)
 	require.NotEqual(t, first.turnID, followUp.turnID)
 }
 
@@ -197,6 +200,11 @@ func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
 	require.Equal(t, ids.sessionID, ids.threadID)
 	require.NotEmpty(t, ids.turnID)
 	require.Equal(t, ids.threadID+":0", ids.windowID)
+	require.Zero(t, ids.windowNumber)
+	contextWindowID, err := uuid.Parse(ids.contextWindowID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), contextWindowID.Version())
+	require.NotEqual(t, ids.threadID, ids.contextWindowID)
 }
 
 // 管理员显式 opt-in 的账号行为不变。
@@ -307,7 +315,7 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	clientHeaders := http.Header{}
 	clientHeaders.Set("session-id", "client-session-aaa")
 
-	turnMetadata := `{"installation_id":"user-install","session_id":"user-session","thread_id":"user-thread","turn_id":"user-turn","window_id":"user-thread:0","sandbox":"seccomp","thread_source":"user"}`
+	turnMetadata := `{"installation_id":"user-install","session_id":"user-session","thread_id":"user-thread","turn_id":"user-turn","window_id":"user-thread:0","window_number":9,"context_window_id":"019c8c36-4adf-7a04-82b3-bd93a6ed8be0","sandbox":"seccomp","thread_source":"user"}`
 	h := http.Header{}
 	h.Set("x-codex-installation-id", "user-install")
 	h.Set("x-codex-window-id", "user-thread:0")
@@ -340,6 +348,8 @@ func TestApplyCodexFingerprintHeaders_SessionMode(t *testing.T) {
 	assert.Equal(t, convergedSession, meta["session_id"])
 	assert.Equal(t, convergedThread, meta["thread_id"])
 	assert.NotEqual(t, "user-turn", meta["turn_id"], "turn_id 应被新生成的值替换")
+	assert.Equal(t, float64(0), meta["window_number"])
+	assert.Equal(t, ids.contextWindowID, meta["context_window_id"])
 	assert.Equal(t, "seccomp", meta["sandbox"], "sandbox 保留原样")
 	assert.Equal(t, "user", meta["thread_source"], "thread_source 保留原样")
 }
@@ -434,7 +444,7 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 
 	// 头改写
 	h := http.Header{}
-	h.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`)
+	h.Set("x-codex-turn-metadata", `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0","window_number":7,"context_window_id":"019c8c36-4adf-7a04-82b3-bd93a6ed8be0"}`)
 	applyCodexFingerprintHeaders(h, ids)
 
 	// 体改写（使用同一份 ids）
@@ -443,7 +453,7 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 			"x-codex-installation-id": "x",
 			"session_id":              "x",
 			"turn_id":                 "x",
-			"x-codex-turn-metadata":   `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0"}`,
+			"x-codex-turn-metadata":   `{"installation_id":"x","session_id":"x","thread_id":"x","turn_id":"x","window_id":"x:0","window_number":7,"context_window_id":"019c8c36-4adf-7a04-82b3-bd93a6ed8be0"}`,
 		},
 	}
 	applyCodexFingerprintClientMetadata(reqBody, ids)
@@ -471,6 +481,12 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, headerTurnID, bodyTurnID, "头和体的 turn_id 必须一致")
 	assert.Equal(t, headerTurnID, bodyEmbeddedTurnID, "头和体内嵌 turn-metadata 的 turn_id 必须一致")
 	assert.Equal(t, ids.turnID, headerTurnID, "所有 turn_id 都应来自同一份 ids")
+	assert.Equal(t, float64(ids.windowNumber), headerMeta["window_number"])
+	assert.Equal(t, headerMeta["window_number"], bodyMeta["window_number"])
+	assert.Equal(t, ids.contextWindowID, headerMeta["context_window_id"])
+	assert.Equal(t, headerMeta["context_window_id"], bodyMeta["context_window_id"])
+	assert.NotContains(t, cm, "window_number")
+	assert.NotContains(t, cm, "context_window_id")
 	assert.NotContains(t, headerMeta, "turn_started_at_unix_ms")
 	assert.Equal(t, float64(ids.turnStartedAtUnixMs), bodyMeta["turn_started_at_unix_ms"])
 }
@@ -881,6 +897,25 @@ func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) 
 			})
 		}
 	}
+}
+
+func TestApplyCodexFingerprintClientMetadata01534PreservesOptionalTurnFields(t *testing.T) {
+	account := newTestOAuthAccount(4244, map[string]any{codexFingerprintModeExtraKey: "session"})
+	ids := resolveCodexFingerprintIDs(account, "client-sess-01534", codexFingerprintSession)
+	require.NotNil(t, ids)
+	body := []byte(`{"model":"gpt-5.6-sol","client_metadata":{"session_id":"client-sess-01534","x-codex-turn-metadata":"{\"forked_from_ordinal_exclusive\":12,\"turn_trigger\":\"user\",\"history_ingest_requested\":true}"}}`)
+
+	mapBody, rawBody := applyMapAndRawFingerprintBodiesForTest(t, body, ids)
+	require.Equal(t, mapBody, rawBody)
+	metadata := gjson.Parse(mapBody["client_metadata"].(map[string]any)["x-codex-turn-metadata"].(string))
+	require.Equal(t, uint64(12), metadata.Get("forked_from_ordinal_exclusive").Uint())
+	require.Equal(t, "user", metadata.Get("turn_trigger").String())
+	require.True(t, metadata.Get("history_ingest_requested").Bool())
+	require.Equal(t, ids.contextWindowID, metadata.Get("context_window_id").String())
+	require.Zero(t, metadata.Get("window_number").Uint())
+	require.False(t, gjson.Get(mapBody["client_metadata"].(map[string]any)["x-codex-turn-metadata"].(string), "tool_namespaces_info").Exists())
+	require.NotContains(t, mapBody["client_metadata"].(map[string]any), "window_number")
+	require.NotContains(t, mapBody["client_metadata"].(map[string]any), "context_window_id")
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *testing.T) {

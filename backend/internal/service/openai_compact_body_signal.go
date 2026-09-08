@@ -105,7 +105,7 @@ func ensureOpenAIRemoteCompactionV2BetaFeature(h http.Header) {
 }
 
 // applyOpenAICodexBetaFeatures rebuilds the session-scoped feature header for
-// Codex OAuth Responses traffic. Codex 0.149.1 enables RemoteCompactionV2 by
+// Codex OAuth Responses traffic. Codex 0.153.4 enables RemoteCompactionV2 by
 // default and advertises it on every ModelClient request. Downstream feature
 // tokens belong to a different client session and must not cross the shared
 // OAuth credential boundary.

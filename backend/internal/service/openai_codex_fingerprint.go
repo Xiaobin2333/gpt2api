@@ -377,6 +377,20 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 	)
 }
 
+// resolveConvergedContextWindowID derives the UUID used by Codex to identify
+// the active auto-compaction context window. It remains stable for the root
+// window of one converged thread while staying distinct from the thread UUID.
+func resolveConvergedContextWindowID(seed, threadID string) string {
+	if seed == "" || threadID == "" {
+		return ""
+	}
+	return deriveStableUUIDv7(
+		scopedCodexFingerprintSeed("codex-context-window-id-v1", seed, threadID),
+		threadID,
+		seed,
+	)
+}
+
 // codexFingerprintIDs 收敛后的完整 ID 集合。
 // 由 resolveCodexFingerprintIDs 一次性生成，同一个实例在头改写和体改写之间共享，
 // 确保所有载体中的 turn_id 等随机字段一致。体改写时还会补记原始
@@ -389,6 +403,8 @@ type codexFingerprintIDs struct {
 	threadID                      string
 	turnID                        string
 	windowID                      string
+	windowNumber                  uint64
+	contextWindowID               string
 	turnStartedAtUnixMs           int64
 	originalBodySessionID         string
 	originalBodySessionIDCaptured bool
@@ -431,6 +447,7 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 		ids.sessionID = ids.threadID
 		ids.turnID = uuid.Must(uuid.NewV7()).String()
 		ids.windowID = ids.threadID + ":0"
+		ids.contextWindowID = resolveConvergedContextWindowID(seed, ids.threadID)
 		return ids
 
 	case codexFingerprintFull:
@@ -438,6 +455,7 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 		ids.threadID = ids.sessionID
 		ids.turnID = uuid.Must(uuid.NewV7()).String()
 		ids.windowID = ids.threadID + ":0"
+		ids.contextWindowID = resolveConvergedContextWindowID(seed, ids.threadID)
 		return ids
 	}
 
@@ -561,6 +579,8 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
+		"window_number":           ids.windowNumber,
+		"context_window_id":       ids.contextWindowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
 	})
 }
@@ -594,11 +614,11 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	if !modified {
 		return
 	}
-	rebuilt, err := json.Marshal(metadata)
+	rebuilt, err := marshalCodexTurnMetadata(metadata)
 	if err != nil {
 		return
 	}
-	h.Set("x-codex-turn-metadata", string(rebuilt))
+	h.Set("x-codex-turn-metadata", rebuilt)
 }
 
 // applyCodexFingerprintClientMetadata 按预计算的收敛 ID 改写请求体中的 client_metadata。
@@ -647,7 +667,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		return modified
 	}
 
-	// Official 0.149.1 always emits these client_metadata carriers. Synthesize
+	// Official 0.153.4 always emits these client_metadata carriers. Synthesize
 	// them for third-party clients as well as rewriting stale values.
 	modified = setCodexMetadataField(existing, "x-codex-installation-id", ids.installationID) || modified
 	modified = setCodexMetadataField(existing, "session_id", ids.sessionID) || modified
@@ -662,6 +682,8 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"agent_name":              "/root",
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
+		"window_number":           ids.windowNumber,
+		"context_window_id":       ids.contextWindowID,
 		"request_kind":            "turn",
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
 	}) || modified
@@ -817,7 +839,7 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 }
 
 // rewriteClientMetadataEmbeddedTurnMetadata rewrites the canonical embedded
-// metadata snapshot and creates it when an official 0.149.1 carrier is absent.
+// metadata snapshot and creates it when an official 0.153.4 carrier is absent.
 func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) bool {
 	raw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	metadata := make(map[string]any, len(fields))
@@ -834,11 +856,11 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 		}
 	}
 	if modified {
-		rebuilt, err := json.Marshal(metadata)
+		rebuilt, err := marshalCodexTurnMetadata(metadata)
 		if err != nil {
 			return false
 		}
-		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
+		clientMetadata["x-codex-turn-metadata"] = rebuilt
 	}
 	return modified
 }

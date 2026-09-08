@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -329,11 +331,11 @@ func sanitizeCodexOAuthTurnMetadataString(raw string) string {
 	if !changed {
 		return trimmed
 	}
-	next, err := json.Marshal(payload)
+	next, err := marshalCodexTurnMetadata(payload)
 	if err != nil {
 		return ""
 	}
-	return string(next)
+	return next
 }
 
 var codexOAuthAllowedTurnMetadataFields = map[string]struct{}{
@@ -343,19 +345,24 @@ var codexOAuthAllowedTurnMetadataFields = map[string]struct{}{
 	"agent_name":                     {},
 	"turn_id":                        {},
 	"window_id":                      {},
+	"window_number":                  {},
+	"context_window_id":              {},
 	"request_kind":                   {},
 	"forked_from_thread_id":          {},
+	"forked_from_ordinal_exclusive":  {},
 	"parent_thread_id":               {},
 	"parent_turn_id":                 {},
 	"root_turn_id":                   {},
 	"subagent_kind":                  {},
 	"thread_source":                  {},
+	"turn_trigger":                   {},
 	"sandbox":                        {},
 	"sandbox_mode":                   {},
 	"auto_review_enabled":            {},
 	"node_repl_auto_review_required": {},
 	"node_repl_disabled":             {},
 	"turn_started_at_unix_ms":        {},
+	"history_ingest_requested":       {},
 	"compaction":                     {},
 }
 
@@ -391,9 +398,11 @@ func sanitizeCodexOAuthTurnMetadataMap(metadata map[string]any) bool {
 
 func sanitizeCodexOAuthTurnMetadataValue(key string, value any) (valid bool, changed bool) {
 	switch key {
-	case "auto_review_enabled", "node_repl_auto_review_required", "node_repl_disabled":
+	case "auto_review_enabled", "node_repl_auto_review_required", "node_repl_disabled", "history_ingest_requested":
 		_, ok := value.(bool)
 		return ok, false
+	case "window_number", "forked_from_ordinal_exclusive":
+		return isCodexOAuthUnsignedInteger(value), false
 	case "turn_started_at_unix_ms":
 		switch value.(type) {
 		case json.Number, float64:
@@ -430,6 +439,18 @@ func sanitizeCodexOAuthTurnMetadataValue(key string, value any) (valid bool, cha
 	default:
 		text, ok := value.(string)
 		return ok && strings.TrimSpace(text) != "", false
+	}
+}
+
+func isCodexOAuthUnsignedInteger(value any) bool {
+	switch number := value.(type) {
+	case float64:
+		return number >= 0 && number < math.Exp2(64) && math.Trunc(number) == number
+	case json.Number:
+		_, err := strconv.ParseUint(number.String(), 10, 64)
+		return err == nil
+	default:
+		return false
 	}
 }
 

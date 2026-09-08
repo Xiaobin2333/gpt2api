@@ -118,12 +118,15 @@ func ApplyCodexCanonicalAuthIdentity(h http.Header) {
 }
 
 type codexOAuthRequestIdentity struct {
-	installationID string
-	sessionID      string
-	threadID       string
-	turnID         string
-	windowID       string
-	turnStartedAt  int64
+	installationID  string
+	sessionID       string
+	threadID        string
+	turnID          string
+	windowID        string
+	windowNumber    uint64
+	hasWindowNumber bool
+	contextWindowID string
+	turnStartedAt   int64
 }
 
 func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.Header, body []byte, promptCacheKey string) codexOAuthRequestIdentity {
@@ -138,6 +141,11 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 		identity.threadID = ids.threadID
 		identity.turnID = ids.turnID
 		identity.windowID = ids.windowID
+		if ids.mode == codexFingerprintSession || ids.mode == codexFingerprintFull {
+			identity.windowNumber = ids.windowNumber
+			identity.hasWindowNumber = true
+			identity.contextWindowID = ids.contextWindowID
+		}
 		identity.turnStartedAt = ids.turnStartedAtUnixMs
 	}
 	embeddedTurnMetadata := gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String()
@@ -182,6 +190,18 @@ func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.H
 			h.Get("x-codex-window-id"),
 			inbound.Get("x-codex-window-id"),
 		)
+	}
+	if !identity.hasWindowNumber {
+		windowNumber := gjson.Get(embeddedTurnMetadata, "window_number")
+		if windowNumber.Exists() && windowNumber.Type == gjson.Number {
+			if parsed, err := strconv.ParseUint(windowNumber.Raw, 10, 64); err == nil {
+				identity.windowNumber = parsed
+				identity.hasWindowNumber = true
+			}
+		}
+	}
+	if identity.contextWindowID == "" {
+		identity.contextWindowID = strings.TrimSpace(gjson.Get(embeddedTurnMetadata, "context_window_id").String())
 	}
 	if identity.turnStartedAt == 0 {
 		identity.turnStartedAt = gjson.Get(embeddedTurnMetadata, "turn_started_at_unix_ms").Int()
@@ -276,6 +296,12 @@ func applyCodexOAuthIdentityTurnMetadataHeader(h http.Header, identity codexOAut
 	metadata["agent_name"] = "/root"
 	metadata["turn_id"] = identity.turnID
 	metadata["window_id"] = identity.windowID
+	if identity.hasWindowNumber {
+		metadata["window_number"] = identity.windowNumber
+	}
+	if identity.contextWindowID != "" {
+		metadata["context_window_id"] = identity.contextWindowID
+	}
 	if identity.turnStartedAt > 0 {
 		metadata["turn_started_at_unix_ms"] = identity.turnStartedAt
 	}
@@ -357,13 +383,17 @@ var codexTurnMetadataFieldOrder = [...]string{
 	"agent_name",
 	"turn_id",
 	"window_id",
+	"window_number",
+	"context_window_id",
 	"request_kind",
 	"forked_from_thread_id",
+	"forked_from_ordinal_exclusive",
 	"parent_thread_id",
 	"parent_turn_id",
 	"root_turn_id",
 	"subagent_kind",
 	"thread_source",
+	"turn_trigger",
 	"sandbox",
 	"sandbox_mode",
 	"auto_review_enabled",
@@ -372,6 +402,7 @@ var codexTurnMetadataFieldOrder = [...]string{
 	"workspaces",
 	"tool_namespaces_info",
 	"turn_started_at_unix_ms",
+	"history_ingest_requested",
 	"compaction",
 }
 
@@ -516,7 +547,7 @@ func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 
 // buildCodexTUIUserAgentFromFingerprint keeps only the environment portion of
 // an official Codex-family UA. The outbound product identity is always the
-// 0.149.1 Codex TUI shape observed in codex-rs default_client + app-server.
+// 0.153.4 Codex TUI shape observed in codex-rs default_client + app-server.
 func buildCodexTUIUserAgentFromFingerprint(candidateUA, version string) (string, bool) {
 	version = NormalizeCodexClientVersion(version)
 	if version == "" {

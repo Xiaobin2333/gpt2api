@@ -37,8 +37,9 @@ type Profile struct {
 	RandomizeExtensions bool     // Shuffle Extensions for each ClientHello (rustls behavior)
 }
 
-// CodexHTTPProfile returns the OpenSSL 3.x ClientHello emitted by Codex CLI
-// 0.149.1 for OAuth token and chatgpt.com HTTP requests.
+// CodexHTTPProfile returns the OpenSSL 3.x ClientHello captured from Codex CLI
+// 0.149.1 for OAuth token and chatgpt.com HTTP requests. Codex CLI 0.153.4 uses
+// the same reqwest/rustls dependency versions, so the profile remains current.
 func CodexHTTPProfile() *Profile {
 	return &Profile{
 		Name: "codex-cli-0.149.1-http",
@@ -87,8 +88,9 @@ func CodexHTTPProfile() *Profile {
 }
 
 // CodexWebSocketProfile returns the rustls/aws-lc ClientHello emitted by
-// Codex CLI 0.149.1 for Responses WebSocket connections. rustls deliberately
-// randomizes extension order for every handshake.
+// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.153.4 uses
+// the same tokio-tungstenite/rustls versions; rustls deliberately randomizes
+// extension order for every handshake.
 func CodexWebSocketProfile() *Profile {
 	return &Profile{
 		Name: "codex-cli-0.149.1-websocket",

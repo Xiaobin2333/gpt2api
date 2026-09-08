@@ -34,7 +34,7 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 			"mcp_servers":{"private":{"url":"http://127.0.0.1:9000"}},
 			"trace_id":"local-trace",
 			"telemetry":{"app_version":"9.9.9"},
-			"x-codex-turn-metadata":"{\"session_id\":\"session-keep\",\"request_kind\":\"turn\",\"sandbox_mode\":\"workspace-write\",\"compaction\":{\"trigger\":\"auto\",\"strategy\":\"memento\",\"private\":\"drop\"},\"future_unique\":\"drop\",\"agent_name\":\"/home/user/project\",\"tool_namespaces_info\":{\"private\":{}},\"base_url\":\"https://relay.example\",\"region\":\"CN\",\"device_id\":\"device-leak\",\"app.version\":\"9.9.9\"}"
+			"x-codex-turn-metadata":"{\"session_id\":\"session-keep\",\"window_number\":0,\"context_window_id\":\"019c8c36-4adf-7a04-82b3-bd93a6ed8be0\",\"request_kind\":\"turn\",\"forked_from_ordinal_exclusive\":12,\"turn_trigger\":\"user\",\"sandbox_mode\":\"workspace-write\",\"history_ingest_requested\":true,\"compaction\":{\"trigger\":\"auto\",\"strategy\":\"memento\",\"private\":\"drop\"},\"future_unique\":\"drop\",\"agent_name\":\"/home/user/project\",\"tool_namespaces_info\":{\"private\":{}},\"base_url\":\"https://relay.example\",\"region\":\"CN\",\"device_id\":\"device-leak\",\"app.version\":\"9.9.9\"}"
 		}
 	}`)
 
@@ -72,8 +72,13 @@ func TestSanitizeCodexOAuthJSONBodyStripsLocalIdentityMetadata(t *testing.T) {
 	}
 	turnMetadata := gjson.GetBytes(got, "client_metadata.x-codex-turn-metadata").String()
 	require.Equal(t, "session-keep", gjson.Get(turnMetadata, "session_id").String())
+	require.Zero(t, gjson.Get(turnMetadata, "window_number").Uint())
+	require.Equal(t, "019c8c36-4adf-7a04-82b3-bd93a6ed8be0", gjson.Get(turnMetadata, "context_window_id").String())
 	require.Equal(t, "turn", gjson.Get(turnMetadata, "request_kind").String())
+	require.Equal(t, uint64(12), gjson.Get(turnMetadata, "forked_from_ordinal_exclusive").Uint())
+	require.Equal(t, "user", gjson.Get(turnMetadata, "turn_trigger").String())
 	require.Equal(t, "workspace-write", gjson.Get(turnMetadata, "sandbox_mode").String())
+	require.True(t, gjson.Get(turnMetadata, "history_ingest_requested").Bool())
 	require.Equal(t, "auto", gjson.Get(turnMetadata, "compaction.trigger").String())
 	require.Equal(t, "memento", gjson.Get(turnMetadata, "compaction.strategy").String())
 	require.False(t, gjson.Get(turnMetadata, "compaction.private").Exists())
@@ -98,7 +103,7 @@ func TestSanitizeCodexOAuthJSONBodyPreservesInvalidOrUnchangedBody(t *testing.T)
 	require.Equal(t, clean, got)
 }
 
-func TestSanitizeCodexOAuthJSONBodyForSchemaEnforces01491TopLevelFields(t *testing.T) {
+func TestSanitizeCodexOAuthJSONBodyForSchemaEnforces01534TopLevelFields(t *testing.T) {
 	tests := []struct {
 		name          string
 		schema        codexOAuthRequestSchema
@@ -246,7 +251,7 @@ func TestSanitizeCodexOAuthJSONBodyValidatesOfficialWSMetadataValues(t *testing.
 	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").Exists())
 }
 
-func TestSanitizeCodexOAuthJSONBodyPreservesValidated01491WSTraceMetadata(t *testing.T) {
+func TestSanitizeCodexOAuthJSONBodyPreservesValidated01534WSTraceMetadata(t *testing.T) {
 	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	body := []byte(`{"model":"gpt-5.4","client_metadata":{"ws_request_header_traceparent":"` + traceparent + `","ws_request_header_tracestate":"vendor=value"}}`)
 
@@ -262,7 +267,7 @@ func TestSanitizeCodexOAuthJSONBodyPreservesValidated01491WSTraceMetadata(t *tes
 	require.False(t, gjson.GetBytes(got, "client_metadata.ws_request_header_tracestate").Exists())
 }
 
-func TestCodex01491TUIStripsUnavailableAttestationHeader(t *testing.T) {
+func TestCodex01534TUIStripsUnavailableAttestationHeader(t *testing.T) {
 	require.False(t, openaiAllowedHeaders["x-oai-attestation"])
 	require.False(t, openaiPassthroughAllowedHeaders["x-oai-attestation"])
 }
@@ -300,6 +305,14 @@ func TestSanitizeCodexOAuthTurnMetadataDropsOpaqueSensitiveValue(t *testing.T) {
 	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque timezone=Asia/Shanghai`))
 	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque workspace=/home/user/project`))
 	require.Empty(t, sanitizeCodexOAuthTurnMetadataString(`opaque sandbox=workspace-write`))
+}
+
+func TestSanitizeCodexOAuthTurnMetadataRejectsInvalid01534FieldTypes(t *testing.T) {
+	metadata := sanitizeCodexOAuthTurnMetadataString(`{"session_id":"session-keep","window_number":-1,"forked_from_ordinal_exclusive":1.5,"history_ingest_requested":"true"}`)
+	require.Equal(t, "session-keep", gjson.Get(metadata, "session_id").String())
+	require.False(t, gjson.Get(metadata, "window_number").Exists())
+	require.False(t, gjson.Get(metadata, "forked_from_ordinal_exclusive").Exists())
+	require.False(t, gjson.Get(metadata, "history_ingest_requested").Exists())
 }
 
 func TestSanitizeCodexOAuthTurnMetadataHeader(t *testing.T) {
