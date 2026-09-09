@@ -907,15 +907,19 @@ func TestApplyCodexFingerprintClientMetadata01534PreservesOptionalTurnFields(t *
 
 	mapBody, rawBody := applyMapAndRawFingerprintBodiesForTest(t, body, ids)
 	require.Equal(t, mapBody, rawBody)
-	metadata := gjson.Parse(mapBody["client_metadata"].(map[string]any)["x-codex-turn-metadata"].(string))
+	clientMetadata, ok := mapBody["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	embeddedTurnMetadata, ok := clientMetadata["x-codex-turn-metadata"].(string)
+	require.True(t, ok)
+	metadata := gjson.Parse(embeddedTurnMetadata)
 	require.Equal(t, uint64(12), metadata.Get("forked_from_ordinal_exclusive").Uint())
 	require.Equal(t, "user", metadata.Get("turn_trigger").String())
 	require.True(t, metadata.Get("history_ingest_requested").Bool())
 	require.Equal(t, ids.contextWindowID, metadata.Get("context_window_id").String())
 	require.Zero(t, metadata.Get("window_number").Uint())
-	require.False(t, gjson.Get(mapBody["client_metadata"].(map[string]any)["x-codex-turn-metadata"].(string), "tool_namespaces_info").Exists())
-	require.NotContains(t, mapBody["client_metadata"].(map[string]any), "window_number")
-	require.NotContains(t, mapBody["client_metadata"].(map[string]any), "context_window_id")
+	require.False(t, gjson.Get(embeddedTurnMetadata, "tool_namespaces_info").Exists())
+	require.NotContains(t, clientMetadata, "window_number")
+	require.NotContains(t, clientMetadata, "context_window_id")
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_PreservesUnrelatedFields(t *testing.T) {

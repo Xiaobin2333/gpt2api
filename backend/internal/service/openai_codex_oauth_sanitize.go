@@ -217,7 +217,7 @@ func validCodexW3CTraceparent(value string) bool {
 		if i == 2 || i == 35 || i == 52 {
 			continue
 		}
-		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}

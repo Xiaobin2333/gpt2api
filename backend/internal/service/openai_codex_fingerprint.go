@@ -42,15 +42,20 @@ func SetCodexFingerprintDeploymentSalt(salt string) {
 }
 
 func scopedCodexFingerprintSeed(namespace string, parts ...string) string {
-	scope := codexFingerprintDeploymentScope.Load().([32]byte)
+	scope, ok := codexFingerprintDeploymentScope.Load().([32]byte)
+	if !ok {
+		// The package initializer always stores a [32]byte. Keep a deterministic
+		// fallback if a future caller replaces the atomic value with another type.
+		scope = sha256.Sum256([]byte("codex-fingerprint-default-deployment"))
+	}
 	var b strings.Builder
 	b.Grow(len(namespace) + len(scope) + len(parts)*40)
-	b.WriteString(namespace)
-	b.WriteByte(0)
-	b.Write(scope[:])
+	_, _ = b.WriteString(namespace)
+	_ = b.WriteByte(0)
+	_, _ = b.Write(scope[:])
 	for _, part := range parts {
-		b.WriteByte(0)
-		b.WriteString(part)
+		_ = b.WriteByte(0)
+		_, _ = b.WriteString(part)
 	}
 	return b.String()
 }

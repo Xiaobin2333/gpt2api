@@ -425,10 +425,10 @@ func marshalCodexTurnMetadata(metadata map[string]any) (string, error) {
 	orderedKeys = append(orderedKeys, extraKeys...)
 
 	var encoded bytes.Buffer
-	encoded.WriteByte('{')
+	_ = encoded.WriteByte('{')
 	for index, key := range orderedKeys {
 		if index > 0 {
-			encoded.WriteByte(',')
+			_ = encoded.WriteByte(',')
 		}
 		keyJSON, err := marshalCodexJSONValue(key)
 		if err != nil {
@@ -438,11 +438,11 @@ func marshalCodexTurnMetadata(metadata map[string]any) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		encoded.Write(keyJSON)
-		encoded.WriteByte(':')
-		encoded.Write(valueJSON)
+		_, _ = encoded.Write(keyJSON)
+		_ = encoded.WriteByte(':')
+		_, _ = encoded.Write(valueJSON)
 	}
-	encoded.WriteByte('}')
+	_ = encoded.WriteByte('}')
 	return asciiOnlyJSON(encoded.Bytes()), nil
 }
 
@@ -467,7 +467,7 @@ func asciiOnlyJSON(encoded []byte) string {
 		r, size := utf8.DecodeRune(encoded)
 		encoded = encoded[size:]
 		if r <= 0x7f {
-			out.WriteByte(byte(r))
+			_ = out.WriteByte(byte(r))
 			continue
 		}
 		if r <= 0xffff {
@@ -482,11 +482,11 @@ func asciiOnlyJSON(encoded []byte) string {
 }
 
 func writeCodexJSONUnicodeEscape(out *strings.Builder, value uint16, hex string) {
-	out.WriteString(`\u`)
-	out.WriteByte(hex[(value>>12)&0xf])
-	out.WriteByte(hex[(value>>8)&0xf])
-	out.WriteByte(hex[(value>>4)&0xf])
-	out.WriteByte(hex[value&0xf])
+	_, _ = out.WriteString(`\u`)
+	_ = out.WriteByte(hex[(value>>12)&0xf])
+	_ = out.WriteByte(hex[(value>>8)&0xf])
+	_ = out.WriteByte(hex[(value>>4)&0xf])
+	_ = out.WriteByte(hex[value&0xf])
 }
 
 // CodexCanonicalClientVersion 返回当前生效的 Codex 客户端版本号。

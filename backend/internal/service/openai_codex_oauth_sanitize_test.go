@@ -286,7 +286,8 @@ func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
 	}
 
 	oauthPayload := svc.buildOpenAIWSCreatePayload(request, &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth})
-	oauthMetadata := oauthPayload["client_metadata"].(map[string]any)
+	oauthMetadata, ok := oauthPayload["client_metadata"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "session-keep", oauthMetadata["session_id"])
 	require.NotContains(t, oauthMetadata, "base_url")
 	require.NotContains(t, oauthMetadata, "device_id")
@@ -294,7 +295,8 @@ func TestBuildOpenAIWSCreatePayloadSanitizesOnlyOAuth(t *testing.T) {
 	require.NotContains(t, oauthPayload, "future_top_level")
 
 	apiKeyPayload := svc.buildOpenAIWSCreatePayload(request, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
-	apiKeyMetadata := apiKeyPayload["client_metadata"].(map[string]any)
+	apiKeyMetadata, ok := apiKeyPayload["client_metadata"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "https://relay.example", apiKeyMetadata["base_url"])
 	require.Equal(t, "device-leak", apiKeyMetadata["device_id"])
 	require.Equal(t, "9.9.9", apiKeyMetadata["app.version"])

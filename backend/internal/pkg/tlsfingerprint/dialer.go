@@ -399,7 +399,6 @@ func HandshakeContext(ctx context.Context, conn net.Conn, profile *Profile, addr
 		DidResume:                   state.DidResume,
 		CipherSuite:                 state.CipherSuite,
 		NegotiatedProtocol:          state.NegotiatedProtocol,
-		NegotiatedProtocolIsMutual:  state.NegotiatedProtocolIsMutual,
 		ServerName:                  state.ServerName,
 		PeerCertificates:            state.PeerCertificates,
 		VerifiedChains:              state.VerifiedChains,

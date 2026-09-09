@@ -619,23 +619,6 @@ func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel stri
 	return normalized, true, nil
 }
 
-func resolveOpenAICompactSessionID(c *gin.Context) string {
-	if c != nil {
-		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
-			return sessionID
-		}
-		if conversationID := strings.TrimSpace(c.GetHeader("conversation_id")); conversationID != "" {
-			return conversationID
-		}
-		if seed, ok := c.Get(openAICompactSessionSeedKey); ok {
-			if seedStr, ok := seed.(string); ok && strings.TrimSpace(seedStr) != "" {
-				return strings.TrimSpace(seedStr)
-			}
-		}
-	}
-	return uuid.NewString()
-}
-
 // openAIResponsesRequestPathSuffix 返回可拼接到上游 /responses URL 后面的子路径。
 // 不可转发的子路径返回空串（退化为裸 /responses）；真正的拒绝由入口守卫
 // IsForwardableOpenAIResponsesRequestPath 负责。这样即便将来新增路由漏挂守卫，
@@ -702,12 +685,6 @@ func openAIResponsesRequestPathSuffixForAccount(c *gin.Context, account *Account
 // the native Responses input-token counting endpoint.
 func IsOpenAIResponsesInputTokensRequestPath(c *gin.Context) bool {
 	return openAIResponsesRequestPathSuffix(c) == "/input_tokens"
-}
-
-// rawOpenAIResponsesRequestPathSuffix 仅做提取，不做任何安全判断。
-func rawOpenAIResponsesRequestPathSuffix(c *gin.Context) string {
-	suffix, _ := checkedOpenAIResponsesRequestPathSuffix(c)
-	return suffix
 }
 
 func checkedOpenAIResponsesRequestPathSuffix(c *gin.Context) (string, bool) {

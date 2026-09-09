@@ -18,7 +18,8 @@ func TestCodexOAuthWebSocketTLSFingerprintScope(t *testing.T) {
 }
 
 func TestCoderOpenAIWSClientDialer_CodexClientUsesDedicatedTLSProfile(t *testing.T) {
-	dialer := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	dialer, ok := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
 	direct, err := dialer.codexHTTPClient("")
 	require.NoError(t, err)
 	directAgain, err := dialer.codexHTTPClient("")
