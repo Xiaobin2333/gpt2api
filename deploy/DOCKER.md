@@ -75,7 +75,10 @@ Docker restores existing containers after a host restart.
 ## Supported Architectures
 
 - `linux/amd64`
-- `linux/arm64`
+
+The GitHub Actions Docker workflow publishes a single `linux/amd64` image.
+ARM64 users should use the matching release archive instead of the container
+image.
 
 ## Tags
 
