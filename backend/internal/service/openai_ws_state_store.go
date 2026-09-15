@@ -38,8 +38,6 @@ type openAIWSConnBinding struct {
 }
 
 type openAIWSTurnStateBinding struct {
-	accountID int64
-	turnID    string
 	turnState string
 	expiresAt time.Time
 }
@@ -78,8 +76,8 @@ type OpenAIWSStateStore interface {
 	GetResponseConn(responseID string) (string, bool)
 	DeleteResponseConn(responseID string)
 
-	BindSessionTurnState(groupID, accountID int64, sessionHash, turnID, turnState string, ttl time.Duration)
-	GetSessionTurnState(groupID, accountID int64, sessionHash, turnID string) (string, bool)
+	BindSessionTurnState(groupID int64, sessionHash, turnState string, ttl time.Duration)
+	GetSessionTurnState(groupID int64, sessionHash string) (string, bool)
 	DeleteSessionTurnState(groupID int64, sessionHash string)
 
 	BindSessionConn(groupID int64, sessionHash, connID string, ttl time.Duration)
@@ -333,11 +331,10 @@ func (s *defaultOpenAIWSStateStore) DeleteResponseConn(responseID string) {
 	s.responseToConnMu.Unlock()
 }
 
-func (s *defaultOpenAIWSStateStore) BindSessionTurnState(groupID, accountID int64, sessionHash, turnID, turnState string, ttl time.Duration) {
+func (s *defaultOpenAIWSStateStore) BindSessionTurnState(groupID int64, sessionHash, turnState string, ttl time.Duration) {
 	key := openAIWSSessionTurnStateKey(groupID, sessionHash)
-	turnID = strings.TrimSpace(turnID)
 	state := strings.TrimSpace(turnState)
-	if key == "" || accountID <= 0 || turnID == "" || state == "" {
+	if key == "" || state == "" {
 		return
 	}
 	ttl = normalizeOpenAIWSTTL(ttl)
@@ -346,34 +343,24 @@ func (s *defaultOpenAIWSStateStore) BindSessionTurnState(groupID, accountID int6
 	s.sessionToTurnStateMu.Lock()
 	ensureBindingCapacity(s.sessionToTurnState, key, openAIWSStateStoreMaxEntriesPerMap)
 	s.sessionToTurnState[key] = openAIWSTurnStateBinding{
-		accountID: accountID,
-		turnID:    turnID,
 		turnState: state,
 		expiresAt: time.Now().Add(ttl),
 	}
 	s.sessionToTurnStateMu.Unlock()
 }
 
-func (s *defaultOpenAIWSStateStore) GetSessionTurnState(groupID, accountID int64, sessionHash, turnID string) (string, bool) {
+func (s *defaultOpenAIWSStateStore) GetSessionTurnState(groupID int64, sessionHash string) (string, bool) {
 	key := openAIWSSessionTurnStateKey(groupID, sessionHash)
-	turnID = strings.TrimSpace(turnID)
-	if key == "" || accountID <= 0 || turnID == "" {
-		if key != "" {
-			s.DeleteSessionTurnState(groupID, sessionHash)
-		}
+	if key == "" {
 		return "", false
 	}
 	s.maybeCleanup()
 
 	now := time.Now()
-	s.sessionToTurnStateMu.Lock()
-	defer s.sessionToTurnStateMu.Unlock()
+	s.sessionToTurnStateMu.RLock()
 	binding, ok := s.sessionToTurnState[key]
-	if !ok {
-		return "", false
-	}
-	if now.After(binding.expiresAt) || binding.accountID != accountID || binding.turnID != turnID || strings.TrimSpace(binding.turnState) == "" {
-		delete(s.sessionToTurnState, key)
+	s.sessionToTurnStateMu.RUnlock()
+	if !ok || now.After(binding.expiresAt) || strings.TrimSpace(binding.turnState) == "" {
 		return "", false
 	}
 	return binding.turnState, true

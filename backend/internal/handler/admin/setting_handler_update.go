@@ -344,6 +344,9 @@ type UpdateSettingsRequest struct {
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
+	// Subscription feature switch (user-facing subscription surface; see SettingKeySubscriptionEnabled)
+	SubscriptionEnabled *bool `json:"subscription_enabled"`
+
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth *bool   `json:"model_plaza_require_auth"`
@@ -359,8 +362,9 @@ type UpdateSettingsRequest struct {
 	RiskControlEnabled *bool `json:"risk_control_enabled"`
 
 	// cyber 会话屏蔽开关 + TTL
-	CyberSessionBlockEnabled    *bool `json:"cyber_session_block_enabled"`
-	CyberSessionBlockTTLSeconds *int  `json:"cyber_session_block_ttl_seconds"`
+	CyberSessionBlockEnabled       *bool                               `json:"cyber_session_block_enabled"`
+	CyberSessionBlockTTLSeconds    *int                                `json:"cyber_session_block_ttl_seconds"`
+	CyberSessionBlockGroupPolicies *[]dto.CyberSessionBlockGroupPolicy `json:"cyber_session_block_group_policies"`
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
@@ -1494,6 +1498,20 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "cyber_session_block_ttl_seconds must be > 0")
 		return
 	}
+	if req.CyberSessionBlockGroupPolicies != nil {
+		seenGroupIDs := make(map[int64]struct{}, len(*req.CyberSessionBlockGroupPolicies))
+		for _, policy := range *req.CyberSessionBlockGroupPolicies {
+			if policy.GroupID <= 0 {
+				response.BadRequest(c, "cyber_session_block_group_policies group_id must be > 0")
+				return
+			}
+			if _, exists := seenGroupIDs[policy.GroupID]; exists {
+				response.BadRequest(c, "cyber_session_block_group_policies contains duplicate group_id")
+				return
+			}
+			seenGroupIDs[policy.GroupID] = struct{}{}
+		}
+	}
 
 	settings := &service.SystemSettings{
 		// 系统全局 platform quota 默认值（整体替换语义）
@@ -1937,6 +1955,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		SubscriptionEnabled: func() bool {
+			if req.SubscriptionEnabled != nil {
+				return *req.SubscriptionEnabled
+			}
+			return previousSettings.SubscriptionEnabled
+		}(),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -1984,6 +2008,16 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.CyberSessionBlockTTLSeconds
 			}
 			return previousSettings.CyberSessionBlockTTLSeconds
+		}(),
+		CyberSessionBlockGroupPolicies: func() []service.CyberSessionBlockGroupPolicy {
+			if req.CyberSessionBlockGroupPolicies == nil {
+				return previousSettings.CyberSessionBlockGroupPolicies
+			}
+			policies := make([]service.CyberSessionBlockGroupPolicy, 0, len(*req.CyberSessionBlockGroupPolicies))
+			for _, policy := range *req.CyberSessionBlockGroupPolicies {
+				policies = append(policies, service.CyberSessionBlockGroupPolicy{GroupID: policy.GroupID, Enabled: policy.Enabled})
+			}
+			return policies
 		}(),
 	}
 
@@ -2380,6 +2414,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+		SubscriptionEnabled:      updatedSettings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,
@@ -2391,6 +2426,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RiskControlEnabled:          updatedSettings.RiskControlEnabled,
 		CyberSessionBlockEnabled:    updatedSettings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
+		CyberSessionBlockGroupPolicies: func() []dto.CyberSessionBlockGroupPolicy {
+			policies := make([]dto.CyberSessionBlockGroupPolicy, 0, len(updatedSettings.CyberSessionBlockGroupPolicies))
+			for _, policy := range updatedSettings.CyberSessionBlockGroupPolicies {
+				policies = append(policies, dto.CyberSessionBlockGroupPolicy{GroupID: policy.GroupID, Enabled: policy.Enabled})
+			}
+			return policies
+		}(),
 		AccountSchedulingThresholds: updatedSettings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
 	}

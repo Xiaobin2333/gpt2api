@@ -1,12 +1,10 @@
 package service
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -155,105 +153,6 @@ func TestIsOpenAIResponsesInputTokensRequestPath(t *testing.T) {
 	}
 	c := newResponsesSuffixTestContext(t, "/v1/responses/compact")
 	require.False(t, IsOpenAIResponsesInputTokensRequestPath(c))
-}
-
-func TestIsForwardableOpenAIOAuthResponsesRequestPath(t *testing.T) {
-	for _, path := range []string{
-		"/v1/responses",
-		"/responses",
-		"/backend-api/codex/responses",
-		"/v1/responses/compact",
-		"/backend-api/codex/responses/compact",
-	} {
-		require.True(t, IsForwardableOpenAIOAuthResponsesRequestPath(newResponsesSuffixTestContext(t, path)), "path=%s", path)
-	}
-	for _, path := range []string{
-		"/v1/responses/compact/detail",
-		"/v1/responses/input_tokens",
-		"/v1/responses/resp_123/cancel",
-		"/backend-api/codex/responses/other",
-		"/v1/responsesx",
-		"/v1/responses-compact",
-	} {
-		require.False(t, IsForwardableOpenAIOAuthResponsesRequestPath(newResponsesSuffixTestContext(t, path)), "path=%s", path)
-	}
-}
-
-func TestOpenAIOAuthRequestBuildersRejectUnknownResponsesSubpaths(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Security: config.SecurityConfig{
-			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
-		}},
-	}
-	account := &Account{
-		ID:       42,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"chatgpt_account_id": "account-42",
-		},
-	}
-	body := []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`)
-
-	for _, path := range []string{
-		"/v1/responses/compact/detail",
-		"/v1/responses/resp_123/cancel",
-		"/backend-api/codex/responses/other",
-	} {
-		c := newResponsesSuffixTestContext(t, path)
-		_, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "", false)
-		require.Error(t, err, "transformed builder path=%s", path)
-		_, err = svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "token")
-		require.Error(t, err, "passthrough builder path=%s", path)
-	}
-
-	c := newResponsesSuffixTestContext(t, "/v1/responses/compact")
-	req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "", false)
-	require.NoError(t, err)
-	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
-}
-
-func TestOpenAIRequestBuildersUseBareResponsesForTranslatedIngress(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Security: config.SecurityConfig{
-			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
-		}},
-	}
-	body := []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`)
-
-	accounts := []*Account{
-		{
-			ID:       43,
-			Platform: PlatformOpenAI,
-			Type:     AccountTypeOAuth,
-			Credentials: map[string]any{
-				"chatgpt_account_id": "account-43",
-			},
-		},
-		{
-			ID:       44,
-			Platform: PlatformOpenAI,
-			Type:     AccountTypeAPIKey,
-			Credentials: map[string]any{
-				"api_key": "sk-test",
-			},
-		},
-	}
-
-	for _, account := range accounts {
-		for _, path := range []string{"/v1/messages", "/v1/chat/completions"} {
-			c := newResponsesSuffixTestContext(t, path)
-			req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "", false)
-			require.NoError(t, err, "account_type=%s path=%s", account.Type, path)
-			if account.IsOpenAIOAuth() {
-				require.Equal(t, chatgptCodexURL, req.URL.String())
-			} else {
-				require.Equal(t, openaiPlatformAPIURL, req.URL.String())
-			}
-		}
-	}
 }
 
 func TestIsOpenAIResponsesCompactPathUsesLegacyEndpointShape(t *testing.T) {

@@ -115,16 +115,28 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			}
 		}
 	}
-	// 普通 WS 握手保留客户端已有 beta；只有原生 compaction_trigger 请求
-	// 才补齐 remote_compaction_v2，与 HTTP 请求使用同一能力判定。
+	// 真实 Codex 的 WS 握手同样携带会话级 x-codex-beta-features
+	// （client.rs build_websocket_headers 复用 build_responses_headers），
+	// 客户端未声明时补成默认形态，与 HTTP 出站保持一致。放在客户端头拷贝
+	// 之外：该头是账号/会话级属性，不依赖入站请求是否存在，也避免预热与
+	// 实际请求因头差异落进不同的连接池兼容分桶。
 	applyOpenAICodexBetaFeatures(c, account, headers)
-	// 保留客户端已有会话值。OAuth 的最终身份收口会将其映射到官方使用的
-	// session-id；不要先编码成网关私有的 16 位哈希形态。
-	if sessionResolution.SessionID != "" {
-		headers.Set("session_id", sessionResolution.SessionID)
-	}
-	if sessionResolution.ConversationID != "" {
-		headers.Set("conversation_id", sessionResolution.ConversationID)
+	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
+	if account != nil && account.UsesOpenAICodexProtocol() {
+		apiKeyID := getAPIKeyIDFromContext(c)
+		if sessionResolution.SessionID != "" {
+			headers.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionResolution.SessionID))
+		}
+		if sessionResolution.ConversationID != "" {
+			headers.Set("conversation_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionResolution.ConversationID))
+		}
+	} else {
+		if sessionResolution.SessionID != "" {
+			headers.Set("session_id", sessionResolution.SessionID)
+		}
+		if sessionResolution.ConversationID != "" {
+			headers.Set("conversation_id", sessionResolution.ConversationID)
+		}
 	}
 	if state := strings.TrimSpace(turnState); state != "" {
 		headers.Set(openAIWSTurnStateHeader, state)
@@ -132,24 +144,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
-	stagedFingerprint := hasStagedCodexFingerprintAttempt(c)
-	if !stagedFingerprint && account != nil && account.UsesOpenAICodexProtocol() {
-		identitySource := codexAccountIdentitySource(c, account)
-		apiKeyID := getAPIKeyIDFromContext(c)
-		applyCodexAccountIdentityHeaders(headers, identitySource, apiKeyID)
-		if sessionResolution.SessionID != "" {
-			headers.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, identitySource, sessionResolution.SessionID))
-		}
-		if sessionResolution.ConversationID != "" {
-			headers.Set("conversation_id", isolateOpenAIUpstreamSessionID(apiKeyID, identitySource, sessionResolution.ConversationID))
-		}
-	}
+	applyCodexAccountIdentityHeaders(headers, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 	applyStagedCodexFingerprintHeaders(c, account, headers)
-	if stagedFingerprint && account != nil && account.IsOpenAIOAuth() {
-		sanitizeCodexOAuthTurnMetadataHeader(headers)
-		identity := resolveCodexOAuthRequestIdentity(c, account, headers, nil, promptCacheKey)
-		applyCodexOAuthRequestIdentityHeaders(headers, identity, false)
-	}
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, headers, account); err != nil {
@@ -208,14 +204,6 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	for k, v := range reqBody {
 		payload[k] = v
 	}
-	if account != nil && account.IsOpenAIOAuth() {
-		for _, key := range [...]string{"metadata", "client_metadata", "credential_extras", "credentials"} {
-			if value, exists := payload[key]; exists {
-				payload[key] = cloneCodexOAuthMetadataValue(value)
-			}
-		}
-		sanitizeCodexOAuthRequestMap(payload)
-	}
 
 	delete(payload, "background")
 	if _, exists := payload["stream"]; !exists {
@@ -226,9 +214,6 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	// OAuth 默认保持 store=false，避免误依赖服务端历史。
 	if account != nil && account.UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(account) {
 		payload["store"] = false
-	}
-	if account != nil && account.IsOpenAIOAuth() {
-		sanitizeCodexOAuthRequestMapForSchema(payload, codexOAuthRequestSchemaWebSocketResponseCreate)
 	}
 	return payload
 }

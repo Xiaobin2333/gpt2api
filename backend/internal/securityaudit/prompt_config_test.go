@@ -51,6 +51,18 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.Contains(t, string(publicJSON), `"endpoints":[]`)
 }
 
+func TestActiveConfigIncludesGroupForSimpleModeAPIKey(t *testing.T) {
+	groupID := int64(42)
+	otherGroupID := int64(43)
+	config := ActiveConfig{AllGroups: false, GroupIDs: []int64{42}}
+	require.True(t, config.IncludesGroup(&groupID))
+	require.False(t, config.IncludesGroup(&otherGroupID))
+	require.False(t, config.IncludesGroup(nil))
+
+	config.AllGroups = true
+	require.True(t, config.IncludesGroup(nil))
+}
+
 func TestCategoryThresholdConfigBackwardCompatibilityAndExplicitClear(t *testing.T) {
 	legacy, err := ParseStorageConfig(`{"enabled":false,"config_version":9}`)
 	require.NoError(t, err)

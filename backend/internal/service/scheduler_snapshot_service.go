@@ -209,6 +209,23 @@ func (s *SchedulerSnapshotService) Stop() {
 
 func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
+	// Simple mode keeps a global pool for group-less keys, but an explicit group
+	// must still be isolated. Its historical group-zero snapshot cannot express
+	// that distinction, so query the group directly until group-aware simple
+	// snapshots are rebuilt.
+	if s.isRunModeSimple() && groupID != nil && *groupID > 0 {
+		if err := s.guardFallback(ctx); err != nil {
+			return nil, useMixed, err
+		}
+		fallbackCtx, cancel := s.withFallbackTimeout(ctx)
+		defer cancel()
+		accounts, err := s.loadAccountsFromDB(fallbackCtx, SchedulerBucket{
+			GroupID:  *groupID,
+			Platform: platform,
+			Mode:     s.resolveMode(platform, hasForcePlatform),
+		}, useMixed)
+		return accounts, useMixed, err
+	}
 	mode := s.resolveMode(platform, hasForcePlatform)
 	bucket := s.bucketFor(groupID, platform, mode)
 	var writeToken SchedulerBucketWriteToken
@@ -609,7 +626,7 @@ func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, p
 		}
 		accountGroupIDs := s.normalizeGroupIDs(account.GroupIDs)
 		switch account.Platform {
-		case PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
+		case PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
 			addPlatformGroups(account.Platform, accountGroupIDs)
 		case PlatformAntigravity:
 			// 批量更新可能刚关闭 mixed_scheduling，仍需清理两个兼容平台的旧快照。
@@ -824,8 +841,8 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
-func schedulerSnapshotPlatforms() [9]string {
-	return [9]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax}
+func schedulerSnapshotPlatforms() [10]string {
+	return [10]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo}
 }
 
 // 生命周期辅助函数有意排除 group0；full rebuild 构造 group0 canonical 集时必须显式调用 canonical helper。
@@ -1471,9 +1488,6 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 		return nil, ErrSchedulerCacheNotReady
 	}
 	groupID := bucket.GroupID
-	if s.isRunModeSimple() {
-		groupID = 0
-	}
 
 	if useMixed {
 		platforms := []string{bucket.Platform, PlatformAntigravity}

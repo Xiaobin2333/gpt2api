@@ -173,9 +173,6 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody) {
 		result.Modified = true
 	}
-	if sanitizeCodexOAuthRequestMap(reqBody) {
-		result.Modified = true
-	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
 	needsToolContinuation := NeedsToolContinuation(reqBody)
 
@@ -199,12 +196,6 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		}
 		if _, ok := reqBody["stream"]; ok {
 			delete(reqBody, "stream")
-			result.Modified = true
-		}
-		// The unary /responses/compact payload has no client_metadata field;
-		// identity is carried by direct headers plus prompt_cache_key.
-		if _, ok := reqBody["client_metadata"]; ok {
-			delete(reqBody, "client_metadata")
 			result.Modified = true
 		}
 	} else {
@@ -1237,7 +1228,15 @@ func normalizeOpenAIModelForUpstream(account *Account, model string) string {
 	if account == nil || account.UsesOpenAICodexProtocol() {
 		return normalizeCodexModel(model)
 	}
-	return strings.TrimSpace(model)
+	model = strings.TrimSpace(model)
+	if account.Platform == PlatformDeepseek {
+		// DeepSeek 走 OpenAI 兼容入口，不经 Anthropic 入站的 [1m] 后缀归一
+		// （parseGatewayRequestCurrentBody 仅处理 PlatformAnthropic 协议）。
+		// 官方 Claude Code 接入要求 ANTHROPIC_MODEL=deepseek-flash[1m] 写法，
+		// 出站前剥离泄漏的客户端上下文后缀，转发规范名给上游。
+		return normalizeClaudeCodeLongContextModel(model)
+	}
+	return model
 }
 
 func SupportsVerbosity(model string) bool {
@@ -1446,20 +1445,16 @@ func ensureCodexReasoningInclude(reqBody map[string]any) bool {
 }
 
 // applyCodexClientMetadata 在请求体补齐 client_metadata["x-codex-installation-id"]，
-// 取值为部署域内派生的账号安装标识；openai_device_id 仅作为派生材料。
+// 取值为账号真实的 openai_device_id（最新 Codex 在请求体携带的安装标识）。
 //
-// 加法式、幂等：仅在该键缺失时注入，绝不覆盖既有 client_metadata
-// （如 turn metadata）；无可用账号身份材料时不写入。
+// 加法式、幂等：仅在账号存在 device_id 且该键缺失时注入，绝不覆盖既有 client_metadata
+// （如 turn metadata），也不伪造——无 device_id 时不写入。
 func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
 	if account == nil {
 		return false
 	}
-	seed, ok := codexFingerprintSeedForConvergence(account)
-	if !ok {
-		return false
-	}
-	installationID := resolveConvergedInstallationID(account, seed)
-	if installationID == "" {
+	deviceID := strings.TrimSpace(account.GetOpenAIDeviceID())
+	if deviceID == "" {
 		return false
 	}
 	const key = "x-codex-installation-id"
@@ -1468,7 +1463,7 @@ func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
 		if v, ok := existing[key].(string); ok && strings.TrimSpace(v) != "" {
 			return false
 		}
-		existing[key] = installationID
+		existing[key] = deviceID
 		reqBody["client_metadata"] = existing
 		return true
 	case map[string]string:
@@ -1479,11 +1474,11 @@ func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
 		for k, v := range existing {
 			next[k] = v
 		}
-		next[key] = installationID
+		next[key] = deviceID
 		reqBody["client_metadata"] = next
 		return true
 	case nil:
-		reqBody["client_metadata"] = map[string]any{key: installationID}
+		reqBody["client_metadata"] = map[string]any{key: deviceID}
 		return true
 	default:
 		return false
@@ -1763,9 +1758,8 @@ func isCodexToolCallItemType(typ string) bool {
 	}
 }
 
-// isCodexToolCallInputType 仅匹配 call-input 类型（不含 output）。具体合法
-// 前缀由 shouldStripOpenAIResponsesInputItemID 按类型判断；custom_tool_call
-// 使用 ctc，其余旧调用类型沿用 fc。
+// isCodexToolCallInputType 仅匹配 call-input 类型（不含 output），这些类型的
+// id 必须以 "fc" 开头，上游会校验 "Expected an ID that begins with 'fc'."。
 func isCodexToolCallInputType(typ string) bool {
 	switch typ {
 	case "function_call",

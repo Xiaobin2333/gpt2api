@@ -10,16 +10,11 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
-	"github.com/imroc/req/v3"
 )
 
 const openAICodexPATWhoamiURLDefault = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami"
 
 var openAICodexPATWhoamiURL = openAICodexPATWhoamiURLDefault
-
-// OpenAICodexAuthClientFactory builds the Codex-profiled HTTP client shared by
-// official auth.openai.com request paths.
-type OpenAICodexAuthClientFactory func(proxyURL string) (*req.Client, error)
 
 var openAIPersonalAccessTokenOAuthCredentialKeys = [...]string{
 	"refresh_token",
@@ -48,40 +43,24 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_INVALID_PREFIX", "Codex personal access token must start with at-")
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-
-	var codexClient *req.Client
-	var fallbackClient *http.Client
-	var err error
-	if s != nil && s.codexAuthClientFactory != nil {
-		codexClient, err = s.codexAuthClientFactory(proxyURL)
-	} else {
-		// Compatibility fallback for manually constructed services. Production
-		// wiring always injects the Codex-profiled client factory.
-		fallbackClient, err = httpclient.GetClient(httpclient.Options{
-			ProxyURL:              proxyURL,
-			Timeout:               20 * time.Second,
-			ResponseHeaderTimeout: 15 * time.Second,
-		})
-	}
+	client, err := httpclient.GetClient(httpclient.Options{
+		ProxyURL:              proxyURL,
+		Timeout:               20 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	})
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_CODEX_PAT_PROXY_INVALID", "invalid proxy configuration: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, openAICodexPATWhoamiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openAICodexPATWhoamiURL, nil)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_PAT_REQUEST_FAILED", "failed to build validation request: %v", err)
 	}
 	req.Header.Set("authorization", "Bearer "+accessToken)
+	req.Header.Set("accept", "application/json")
 	ApplyCodexCanonicalAuthIdentity(req.Header)
 
-	var resp *http.Response
-	if codexClient != nil {
-		resp, err = codexClient.GetClient().Do(req)
-	} else {
-		resp, err = fallbackClient.Do(req)
-	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_VALIDATE_FAILED", "failed to validate Codex personal access token: %v", err)
 	}

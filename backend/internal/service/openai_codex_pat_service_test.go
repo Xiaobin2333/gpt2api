@@ -7,19 +7,15 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
-	var factoryCalled bool
 	var gotAuthorization string
-	var gotAccept string
 	var gotOriginator string
 	var gotUserAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuthorization = r.Header.Get("authorization")
-		gotAccept = r.Header.Get("accept")
 		gotOriginator = r.Header.Get("originator")
 		gotUserAgent = r.Header.Get("user-agent")
 		w.Header().Set("content-type", "application/json")
@@ -38,18 +34,11 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	defer func() { openAICodexPATWhoamiURL = originalURL }()
 
 	svc := NewOpenAIOAuthService(nil, nil)
-	svc.SetCodexAuthClientFactory(func(proxyURL string) (*req.Client, error) {
-		factoryCalled = true
-		require.Empty(t, proxyURL)
-		return req.C(), nil
-	})
 	defer svc.Stop()
 
 	info, err := svc.ValidateCodexPersonalAccessToken(context.Background(), " at-test-token ", "")
 	require.NoError(t, err)
-	require.True(t, factoryCalled)
 	require.Equal(t, "Bearer at-test-token", gotAuthorization)
-	require.Empty(t, gotAccept)
 	require.Equal(t, openai.CodexDefaultOriginator, gotOriginator)
 	require.Equal(t, CodexCanonicalUserAgent(), gotUserAgent)
 	require.Equal(t, OpenAIAuthModePersonalAccessToken, info.AuthMode)

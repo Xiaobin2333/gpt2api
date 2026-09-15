@@ -432,6 +432,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 
+	// Subscription feature switch
+	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
+
 	// Model plaza feature switches + description
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
 	updates[SettingKeyModelPlazaRequireAuth] = strconv.FormatBool(settings.ModelPlazaRequireAuth)
@@ -449,6 +452,16 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.CyberSessionBlockTTLSeconds > 0 {
 		updates[SettingKeyCyberSessionBlockTTLSeconds] = strconv.Itoa(settings.CyberSessionBlockTTLSeconds)
 	}
+	policies, err := normalizeCyberSessionBlockGroupPolicies(settings.CyberSessionBlockGroupPolicies)
+	if err != nil {
+		return nil, err
+	}
+	settings.CyberSessionBlockGroupPolicies = policies
+	policiesJSON, err := json.Marshal(policies)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cyber session block group policies: %w", err)
+	}
+	updates[SettingKeyCyberSessionBlockGroupPolicies] = string(policiesJSON)
 
 	// Claude Code version check
 	updates[SettingKeyMinClaudeCodeVersion] = settings.MinClaudeCodeVersion
@@ -789,6 +802,17 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
+	s.cyberSessionBlockRuntimeSF.Forget("cyber_session_block_runtime")
+	groupPolicies := make(map[int64]bool, len(settings.CyberSessionBlockGroupPolicies))
+	for _, policy := range settings.CyberSessionBlockGroupPolicies {
+		groupPolicies[policy.GroupID] = policy.Enabled
+	}
+	s.cyberSessionBlockRuntimeCache.Store(&cachedCyberSessionBlockRuntime{
+		enabled:       settings.CyberSessionBlockEnabled,
+		ttl:           time.Duration(settings.CyberSessionBlockTTLSeconds) * time.Second,
+		groupPolicies: groupPolicies,
+		expiresAt:     time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
+	})
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}

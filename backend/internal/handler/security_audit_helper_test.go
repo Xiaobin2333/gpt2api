@@ -9,11 +9,28 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestBuildSecurityAuditRequestPreservesSimpleModeAPIKeyGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	groupID := int64(42)
+	apiKey := &service.APIKey{
+		ID: 9, UserID: 7, GroupID: &groupID,
+		Group: &service.Group{ID: groupID, Name: "simple-openai", Platform: service.PlatformOpenAI},
+	}
+	request := buildSecurityAuditRequest(c, apiKey, middleware2.AuthSubject{UserID: 7}, "openai_responses", "gpt-5", []byte(`{"input":"hello"}`), "http")
+	require.NotNil(t, request.GroupID)
+	require.Equal(t, groupID, *request.GroupID)
+	require.Equal(t, "simple-openai", request.GroupName)
+}
 
 func TestCachesSecurityAuditCompletionSkipsWebSocketStages(t *testing.T) {
 	require.True(t, cachesSecurityAuditCompletion("http"))

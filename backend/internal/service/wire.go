@@ -111,11 +111,9 @@ func ProvideOpenAIOAuthService(
 	proxyRepo ProxyRepository,
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
-	codexAuthClientFactory OpenAICodexAuthClientFactory,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
-	svc.SetCodexAuthClientFactory(codexAuthClientFactory)
 	return svc
 }
 
@@ -178,20 +176,15 @@ func ProvideOpenAITokenProvider(
 
 // ProvideOpenAIQuotaService wires the OpenAI quota query/reset service.
 // It depends on the OpenAI token provider for refreshed access tokens and the
-// Codex HTTP client factory used by the official backend client.
+// privacy client factory for the impersonated upstream HTTP client.
 func ProvideOpenAIQuotaService(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	tokenProvider *OpenAITokenProvider,
-	codexAuthClientFactory OpenAICodexAuthClientFactory,
+	privacyClientFactory PrivacyClientFactory,
 	openAIGatewayService *OpenAIGatewayService,
 ) *OpenAIQuotaService {
-	service := NewOpenAIQuotaService(
-		accountRepo,
-		proxyRepo,
-		tokenProvider,
-		PrivacyClientFactory(codexAuthClientFactory),
-	)
+	service := NewOpenAIQuotaService(accountRepo, proxyRepo, tokenProvider, privacyClientFactory)
 	service.agentIdentityWS = openAIGatewayService
 	return service
 }
@@ -231,8 +224,9 @@ func ProvideAccountUsageService(
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
+	openAIGatewayService *OpenAIGatewayService,
 ) *AccountUsageService {
-	return NewAccountUsageService(
+	service := NewAccountUsageService(
 		accountRepo,
 		usageLogRepo,
 		usageFetcher,
@@ -245,6 +239,8 @@ func ProvideAccountUsageService(
 		identityCache,
 		tlsFPProfileService,
 	)
+	service.agentIdentityWS = openAIGatewayService
+	return service
 }
 
 func ProvideAccountTestService(
@@ -490,6 +486,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	ollamaCloudUsage *OllamaCloudUsageService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -499,6 +496,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
 	return svc
 }
 

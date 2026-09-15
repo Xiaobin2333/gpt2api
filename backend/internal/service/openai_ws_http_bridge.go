@@ -24,10 +24,7 @@ const (
 	openAIWSHTTPBridgeErrorBodyLimitBytes         = 64 * 1024
 )
 
-const (
-	openAIWSHTTPBridgeToolStateContextKey = "openai_ws_http_bridge_tool_state"
-	openAIWSHTTPBridgeTurnStateContextKey = "openai_ws_http_bridge_turn_state"
-)
+const openAIWSHTTPBridgeToolStateContextKey = "openai_ws_http_bridge_tool_state"
 
 type openAIWSHTTPBridgeToolState struct {
 	ClientMapping apicompat.ResponsesClientToolMapping
@@ -49,25 +46,6 @@ func setOpenAIWSHTTPBridgeToolState(c *gin.Context, state openAIWSHTTPBridgeTool
 	}
 	state.LoweredTools = append(json.RawMessage(nil), state.LoweredTools...)
 	c.Set(openAIWSHTTPBridgeToolStateContextKey, state)
-}
-
-func setOpenAIWSHTTPBridgeTurnState(c *gin.Context, state string) {
-	if c == nil {
-		return
-	}
-	c.Set(openAIWSHTTPBridgeTurnStateContextKey, strings.TrimSpace(state))
-}
-
-func openAIWSHTTPBridgeTurnStateFromContext(c *gin.Context) string {
-	if c == nil {
-		return ""
-	}
-	value, ok := c.Get(openAIWSHTTPBridgeTurnStateContextKey)
-	if !ok {
-		return ""
-	}
-	state, _ := value.(string)
-	return strings.TrimSpace(state)
 }
 
 func decodeOpenAIWSHTTPBridgeLoweredTools(raw json.RawMessage) []any {
@@ -376,8 +354,9 @@ func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 		message = "upstream request failed"
 	}
 	event := map[string]any{
-		"type":   "error",
-		"status": statusCode,
+		"type":            "error",
+		"sequence_number": 0,
+		"status":          statusCode,
 		"error": map[string]any{
 			"type":    "upstream_error",
 			"message": message,
@@ -385,7 +364,7 @@ func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 	}
 	body, err := json.Marshal(event)
 	if err != nil {
-		return []byte(`{"type":"error","error":{"type":"upstream_error","message":"upstream request failed"}}`)
+		return []byte(`{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":"upstream request failed"}}`)
 	}
 	return body
 }
@@ -420,9 +399,9 @@ func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte,
 	if model = strings.TrimSpace(model); model != "" {
 		response["model"] = model
 	}
-	body, err := json.Marshal(map[string]any{"type": "response.failed", "response": response})
+	body, err := json.Marshal(map[string]any{"type": "response.failed", "sequence_number": 0, "response": response})
 	if err != nil {
-		return []byte(`{"type":"response.failed","response":{"status":"failed","output":[],"error":{"code":"upstream_error","message":"Upstream response failed"}}}`)
+		return []byte(`{"type":"response.failed","sequence_number":0,"response":{"status":"failed","output":[],"error":{"code":"upstream_error","message":"Upstream response failed"}}}`)
 	}
 	return body
 }
@@ -459,14 +438,6 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	body, err := prepareOpenAIWSHTTPBridgeBody(account, payload)
 	if err != nil {
 		return nil, fmt.Errorf("prepare http bridge body: %w", err)
-	}
-	responsesLite := account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload)
-	if responsesLite {
-		liteBody, _, liteErr := normalizeOpenAIResponsesLiteToolsPayload(body)
-		if liteErr != nil {
-			return nil, fmt.Errorf("normalize responses Lite http bridge body: %w", liteErr)
-		}
-		body = liteBody
 	}
 	grokIntentSourceBody := append([]byte(nil), body...)
 	_, grokExplicitToolsField := openAIWSHTTPBridgeRawField(grokIntentSourceBody, "tools")
@@ -531,13 +502,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		// This state was minted by the preceding HTTP bridge response on this
-		// connection. Reapply it after the generic client-echo provenance guard;
-		// it never enters the session-hash store or crosses account failover.
-		if bridgeTurnState := openAIWSHTTPBridgeTurnStateFromContext(c); bridgeTurnState != "" && account.UsesOpenAICodexProtocol() {
-			upstreamReq.Header.Set(openAIWSTurnStateHeader, bridgeTurnState)
-		}
-		if responsesLite {
+		if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
 			upstreamReq.Header.Set(responsesLiteHeader, "true")
 		}
 		return upstreamReq, nil

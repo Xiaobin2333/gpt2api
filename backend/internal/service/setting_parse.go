@@ -18,6 +18,42 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
+func parseCyberSessionBlockGroupPolicies(raw string) []CyberSessionBlockGroupPolicy {
+	var policies []CyberSessionBlockGroupPolicy
+	if err := json.Unmarshal([]byte(raw), &policies); err != nil {
+		return []CyberSessionBlockGroupPolicy{}
+	}
+	seen := make(map[int64]struct{}, len(policies))
+	result := make([]CyberSessionBlockGroupPolicy, 0, len(policies))
+	for _, policy := range policies {
+		if policy.GroupID <= 0 {
+			continue
+		}
+		if _, ok := seen[policy.GroupID]; ok {
+			continue
+		}
+		seen[policy.GroupID] = struct{}{}
+		result = append(result, policy)
+	}
+	return result
+}
+
+func normalizeCyberSessionBlockGroupPolicies(policies []CyberSessionBlockGroupPolicy) ([]CyberSessionBlockGroupPolicy, error) {
+	seen := make(map[int64]struct{}, len(policies))
+	result := make([]CyberSessionBlockGroupPolicy, 0, len(policies))
+	for _, policy := range policies {
+		if policy.GroupID <= 0 {
+			return nil, fmt.Errorf("cyber_session_block_group_policies group_id must be > 0")
+		}
+		if _, ok := seen[policy.GroupID]; ok {
+			return nil, fmt.Errorf("cyber_session_block_group_policies contains duplicate group_id %d", policy.GroupID)
+		}
+		seen[policy.GroupID] = struct{}{}
+		result = append(result, policy)
+	}
+	return result, nil
+}
+
 // InitializeDefaultSettings 初始化默认设置
 func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 	// 检查是否已有设置
@@ -202,6 +238,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 
+		// Subscription feature (default enabled; opt-out)
+		SettingKeySubscriptionEnabled: "true",
+
 		// Model plaza feature (default disabled; opt-in, public unless require_auth)
 		SettingKeyModelPlazaEnabled:       "false",
 		SettingKeyModelPlazaRequireAuth:   "false",
@@ -216,8 +255,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRiskControlEnabled: "false",
 
 		// cyber 会话屏蔽（默认关闭，TTL 默认 3600s）
-		SettingKeyCyberSessionBlockEnabled:    "false",
-		SettingKeyCyberSessionBlockTTLSeconds: "3600",
+		SettingKeyCyberSessionBlockEnabled:       "false",
+		SettingKeyCyberSessionBlockTTLSeconds:    "3600",
+		SettingKeyCyberSessionBlockGroupPolicies: "[]",
 
 		// Claude Code version check (default: empty = disabled)
 		SettingKeyMinClaudeCodeVersion: "",
@@ -820,6 +860,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
 
+	// Subscription feature (default: enabled; only an explicit false disables)
+	result.SubscriptionEnabled = !isFalseSettingValue(settings[SettingKeySubscriptionEnabled])
+
 	// Model plaza feature (default: disabled; strict true)
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"
 	result.ModelPlazaRequireAuth = settings[SettingKeyModelPlazaRequireAuth] == "true"
@@ -839,6 +882,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.CyberSessionBlockTTLSeconds = 3600
 	}
+	result.CyberSessionBlockGroupPolicies = parseCyberSessionBlockGroupPolicies(settings[SettingKeyCyberSessionBlockGroupPolicies])
 
 	// Claude Code version check
 	result.MinClaudeCodeVersion = settings[SettingKeyMinClaudeCodeVersion]

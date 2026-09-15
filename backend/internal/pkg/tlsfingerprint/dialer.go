@@ -88,9 +88,9 @@ func CodexHTTPProfile() *Profile {
 }
 
 // CodexWebSocketProfile returns the rustls/aws-lc ClientHello emitted by
-// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.153.4 uses
-// the same tokio-tungstenite/rustls versions; rustls deliberately randomizes
-// extension order for every handshake.
+// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.153.4
+// uses the same tokio-tungstenite/rustls versions; rustls deliberately
+// randomizes extension order for every handshake.
 func CodexWebSocketProfile() *Profile {
 	return &Profile{
 		Name: "codex-cli-0.149.1-websocket",
@@ -104,12 +104,10 @@ func CodexWebSocketProfile() *Profile {
 			0x0503, 0x0403, 0x0603, 0x0807, 0x0806,
 			0x0805, 0x0804, 0x0601, 0x0501, 0x0401,
 		},
-		SupportedVersions: []uint16{utls.VersionTLS13, utls.VersionTLS12},
-		KeyShareGroups:    []uint16{0x11ec, 0x001d},
-		PSKModes:          []uint16{uint16(utls.PskModeDHE)},
-		Extensions: []uint16{
-			0, 5, 10, 11, 13, 23, 35, 43, 45, 51,
-		},
+		SupportedVersions:   []uint16{utls.VersionTLS13, utls.VersionTLS12},
+		KeyShareGroups:      []uint16{0x11ec, 0x001d},
+		PSKModes:            []uint16{uint16(utls.PskModeDHE)},
+		Extensions:          []uint16{0, 5, 10, 11, 13, 23, 35, 43, 45, 51},
 		RandomizeExtensions: true,
 	}
 }

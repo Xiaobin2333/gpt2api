@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -68,7 +67,7 @@ func TestOpenAIGatewayServiceGetAccessTokenSetupToken(t *testing.T) {
 	}
 }
 
-func TestOpenAISetupTokenImagesUsesOAuthResponsesPath(t *testing.T) {
+func TestOpenAISetupTokenImagesUsesOAuthDirectPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
@@ -101,7 +100,7 @@ func TestOpenAISetupTokenImagesUsesOAuthResponsesPath(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.False(t, failoverErr.SameAccountRetryDeadline.IsZero())
-	require.Contains(t, upstream.lastReq.URL.String(), "/backend-api/codex/responses")
+	require.Contains(t, upstream.lastReq.URL.String(), "/backend-api/codex/images/generations")
 }
 
 func TestOpenAISetupTokenWSCompatibility(t *testing.T) {
@@ -213,7 +212,7 @@ func TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState(t *testing.T) {
 	require.Equal(t, chatgptCodexURL, upstream.requests[0].URL.String())
 	require.Equal(t, "Bearer setup-token-value", upstream.requests[0].Header.Get("Authorization"))
 	require.Equal(t, "chatgpt-setup", upstream.requests[0].Header.Get("chatgpt-account-id"))
-	requireOpenAIMessagesCodexIdentity(t, upstream.requests[0], codexCLIUserAgent, openai.CodexDefaultOriginator)
+	requireOpenAIMessagesCodexIdentity(t, upstream.requests[0], codexCLIUserAgent, "codex-tui")
 	require.Empty(t, upstream.requests[0].Header.Get("x-codex-turn-state"))
 
 	secondBody := []byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"next"}],"stream":false}`)
@@ -230,7 +229,7 @@ func TestOpenAISetupTokenMessagesUsesCodexBridgeAndTurnState(t *testing.T) {
 	require.Equal(t, "turn_state_setup", upstream.requests[1].Header.Get("x-codex-turn-state"))
 	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(0, account, "stable-cache-key")), upstream.requests[1].Header.Get("session_id"))
 	require.Empty(t, upstream.requests[1].Header.Get("conversation_id"))
-	requireOpenAIMessagesCodexIdentity(t, upstream.requests[1], codexCLIUserAgent, openai.CodexDefaultOriginator)
+	requireOpenAIMessagesCodexIdentity(t, upstream.requests[1], codexCLIUserAgent, "codex-tui")
 }
 
 func openAISetupTokenCompatAccount(id int64) *Account {

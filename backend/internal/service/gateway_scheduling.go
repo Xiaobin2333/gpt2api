@@ -1085,11 +1085,11 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 
 	var accounts []Account
 	var err error
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
-	} else if groupID != nil {
+	if groupID != nil {
 		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
 		// 分组内无账号则返回空列表，由上层处理错误，不再回退到全平台查询
+	} else if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
 	} else {
 		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, platform)
 	}
@@ -1167,6 +1167,9 @@ func (s *GatewayService) isAccountInGroup(account *Account, groupID *int64) bool
 		return false
 	}
 	if groupID == nil {
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			return true
+		}
 		// 无分组的 API Key 只能使用未分组的账号
 		return len(account.AccountGroups) == 0
 	}

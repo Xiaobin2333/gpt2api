@@ -361,3 +361,24 @@ func TestGroupIsolation_SimpleMode_GroupedAccountAlsoSchedulable(t *testing.T) {
 	require.NotNil(t, acc)
 	require.Equal(t, int64(1), acc.ID, "SimpleMode 应能调度已分组账号")
 }
+
+func TestGroupIsolation_SimpleMode_ExplicitGroupFiltersAccounts(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(100)
+	accounts := []Account{
+		{ID: 1, Platform: PlatformOpenAI, Priority: 1, Status: StatusActive, Schedulable: true,
+			AccountGroups: []AccountGroup{{GroupID: 200}}},
+		{ID: 2, Platform: PlatformOpenAI, Priority: 2, Status: StatusActive, Schedulable: true,
+			AccountGroups: []AccountGroup{{GroupID: 100}}},
+	}
+	svc := &GatewayService{
+		accountRepo: newGroupAwareMockRepo(accounts),
+		cache:       &mockGatewayCacheForPlatform{},
+		cfg:         &config.Config{RunMode: config.RunModeSimple},
+	}
+
+	acc, err := svc.selectAccountForModelWithPlatform(ctx, &groupID, "", "", nil, PlatformOpenAI)
+	require.NoError(t, err)
+	require.NotNil(t, acc)
+	require.Equal(t, int64(2), acc.ID)
+}

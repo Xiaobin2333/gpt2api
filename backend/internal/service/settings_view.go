@@ -165,19 +165,20 @@ type SystemSettings struct {
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
 
-	DefaultConcurrency           int
-	DefaultBalance               float64
-	RiskControlEnabled           bool
-	CyberSessionBlockEnabled     bool
-	CyberSessionBlockTTLSeconds  int
-	AffiliateEnabled             bool
-	AffiliateRebateRate          float64
-	AffiliateRebateFreezeHours   int
-	AffiliateRebateDurationDays  int
-	AffiliateRebatePerInviteeCap float64
-	AdminRechargeRebateEnabled   bool
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
+	DefaultConcurrency             int
+	DefaultBalance                 float64
+	RiskControlEnabled             bool
+	CyberSessionBlockEnabled       bool
+	CyberSessionBlockTTLSeconds    int
+	CyberSessionBlockGroupPolicies []CyberSessionBlockGroupPolicy
+	AffiliateEnabled               bool
+	AffiliateRebateRate            float64
+	AffiliateRebateFreezeHours     int
+	AffiliateRebateDurationDays    int
+	AffiliateRebatePerInviteeCap   float64
+	AdminRechargeRebateEnabled     bool
+	DefaultUserRPMLimit            int
+	DefaultSubscriptions           []DefaultSubscriptionSetting
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -211,6 +212,12 @@ type SystemSettings struct {
 
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+
+	// Subscription feature switch: gates the whole user-facing subscription surface
+	// (sidebar entries, purchase-page subscription tab, header progress badge,
+	// usage billing-type filter, /subscriptions route). Pairs with PaymentBalanceDisabled
+	// to form the admin-facing "site billing mode" selector.
+	SubscriptionEnabled bool `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
@@ -311,6 +318,13 @@ type SystemSettings struct {
 	AllowUserViewErrorRequests bool
 }
 
+// CyberSessionBlockGroupPolicy overrides the global cyber session block switch
+// for one API-key group. Groups without an entry use the global setting.
+type CyberSessionBlockGroupPolicy struct {
+	GroupID int64 `json:"group_id"`
+	Enabled bool  `json:"enabled"`
+}
+
 type DefaultSubscriptionSetting struct {
 	GroupID      int64 `json:"group_id"`
 	ValidityDays int   `json:"validity_days"`
@@ -366,6 +380,7 @@ type PublicSettings struct {
 	WeChatOAuthMobileEnabled bool
 	BackendModeEnabled       bool
 	PaymentEnabled           bool
+	PaymentBalanceDisabled   bool
 	OIDCOAuthEnabled         bool
 	OIDCOAuthProviderName    string
 	GitHubOAuthEnabled       bool
@@ -392,6 +407,9 @@ type PublicSettings struct {
 
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+
+	// Subscription feature switch (see SystemSettings.SubscriptionEnabled)
+	SubscriptionEnabled bool `json:"subscription_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
@@ -673,7 +691,7 @@ func DefaultBetaPolicySettings() *BetaPolicySettings {
 //   - "priority"（客户端可传 "fast"，归一化为 "priority"）：fast 模式
 //   - "ultrafast"：Codex/API 的 Ultrafast 档位
 //   - "flex"：低优先级模式
-//   - 省略：normal 默认
+//   - 省略：normal 默认；策略中可用专用 "missing" 条件显式匹配
 //
 // 本策略复用 BetaPolicyAction*/BetaPolicyScope* 常量语义，只是匹配键从
 // anthropic-beta header 换成 body 的 service_tier 字段。
@@ -682,6 +700,7 @@ const (
 	OpenAIFastTierPriority  = "priority"  // 仅匹配 fast（priority）
 	OpenAIFastTierUltrafast = "ultrafast" // 仅匹配 ultrafast
 	OpenAIFastTierFlex      = "flex"      // 仅匹配 flex
+	OpenAIFastTierMissing   = "missing"   // 仅匹配省略 service_tier 的请求
 
 	// OpenAIFastPolicyActionForcePriority 会保留 service_tier 字段并强制写成
 	// priority，用于把 flex/auto/default/scale 等已识别 tier 收敛为 fast。
@@ -690,7 +709,7 @@ const (
 
 // OpenAIFastPolicyRule 单条 OpenAI fast/flex 策略规则
 type OpenAIFastPolicyRule struct {
-	ServiceTier          string   `json:"service_tier"`                     // "priority" | "ultrafast" | "flex" | "auto" | "default" | "scale" | "all"
+	ServiceTier          string   `json:"service_tier"`                     // "priority" | "ultrafast" | "flex" | "missing" | "all"
 	Action               string   `json:"action"`                           // "pass" | "filter" | "block" | "force_priority"
 	Scope                string   `json:"scope"`                            // "all" | "oauth" | "apikey" | "bedrock"
 	UserIDs              []int64  `json:"user_ids,omitempty"`               // 空=所有 Sub2API 用户；非空=仅指定 API Key 所属用户

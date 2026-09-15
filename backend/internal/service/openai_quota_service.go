@@ -24,11 +24,17 @@ var ErrSparkShadowResetNotSupported = infraerrors.New(http.StatusConflict, "SPAR
 
 // Endpoints used by the OpenAI/ChatGPT/Codex quota query and reset feature.
 const (
-	chatGPTUsageURL            = "https://chatgpt.com/backend-api/wham/usage"
-	chatGPTRateLimitCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-	chatGPTRateLimitResetURL   = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
-	openaiQuotaUpstreamTimeout = 20 * time.Second
-	openaiQuotaResetCreditsKey = "codex_reset_credit_snapshot"
+	chatGPTUsageURL             = "https://chatgpt.com/backend-api/wham/usage"
+	chatGPTRateLimitCreditsURL  = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+	chatGPTRateLimitResetURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
+	openaiQuotaUpstreamTimeout  = 20 * time.Second
+	openaiQuotaCodexBeta        = "codex-1"
+	openaiQuotaCodexOriginator  = "Codex Desktop"
+	openaiQuotaCodexLanguageTag = "zh-CN"
+	openaiQuotaSecFetchSite     = "none"
+	openaiQuotaSecFetchMode     = "no-cors"
+	openaiQuotaSecFetchDest     = "empty"
+	openaiQuotaResetCreditsKey  = "codex_reset_credit_snapshot"
 )
 
 // OpenAIRateLimitWindow describes a single rate-limit window returned by
@@ -106,15 +112,15 @@ type OpenAIQuotaResetResult struct {
 }
 
 // OpenAIQuotaService queries and consumes ChatGPT/Codex rate-limit reset credits
-// for OpenAI OAuth accounts. WHAM is a Codex backend endpoint, so its client
-// factory must use the same HTTP transport profile as other Codex requests.
+// for OpenAI OAuth accounts. It reuses the privacy client factory so all calls
+// flow through the impersonated HTTP client (Cloudflare-friendly TLS fingerprint).
 type OpenAIQuotaService struct {
-	accountRepo         AccountRepository
-	proxyRepo           ProxyRepository
-	tokenProvider       *OpenAITokenProvider
-	codexClientFactory  PrivacyClientFactory
-	agentIdentityTaskMu sync.Mutex
-	agentIdentityWS     agentIdentityWSConnectionInvalidator
+	accountRepo          AccountRepository
+	proxyRepo            ProxyRepository
+	tokenProvider        *OpenAITokenProvider
+	privacyClientFactory PrivacyClientFactory
+	agentIdentityTaskMu  sync.Mutex
+	agentIdentityWS      agentIdentityWSConnectionInvalidator
 }
 
 // NewOpenAIQuotaService constructs a quota service. token provider is required —
@@ -124,13 +130,13 @@ func NewOpenAIQuotaService(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	tokenProvider *OpenAITokenProvider,
-	codexClientFactory PrivacyClientFactory,
+	privacyClientFactory PrivacyClientFactory,
 ) *OpenAIQuotaService {
 	return &OpenAIQuotaService{
-		accountRepo:        accountRepo,
-		proxyRepo:          proxyRepo,
-		tokenProvider:      tokenProvider,
-		codexClientFactory: codexClientFactory,
+		accountRepo:          accountRepo,
+		proxyRepo:            proxyRepo,
+		tokenProvider:        tokenProvider,
+		privacyClientFactory: privacyClientFactory,
 	}
 }
 
@@ -143,7 +149,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		return nil, err
 	}
 
-	client, err := s.codexClientFactory(proxyURL)
+	client, err := s.privacyClientFactory(proxyURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_CLIENT_ERROR", "failed to build upstream client: %v", err)
 	}
@@ -335,7 +341,7 @@ func (s *OpenAIQuotaService) resetCredit(ctx context.Context, accountID int64, c
 		return nil, err
 	}
 
-	client, err := s.codexClientFactory(proxyURL)
+	client, err := s.privacyClientFactory(proxyURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_CLIENT_ERROR", "failed to build upstream client: %v", err)
 	}
@@ -396,7 +402,7 @@ func (s *OpenAIQuotaService) resetCredit(ctx context.Context, accountID int64, c
 // token via the shared TokenProvider, and resolves the chatgpt-account-id and
 // proxy URL. Centralized so QueryUsage / ResetCredit share validation.
 func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID int64) (accessToken, chatGPTAccountID, proxyURL string, fedRAMP bool, err error) {
-	if s == nil || s.accountRepo == nil || s.codexClientFactory == nil {
+	if s == nil || s.accountRepo == nil || s.privacyClientFactory == nil {
 		return "", "", "", false, infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_NOT_CONFIGURED", "openai quota service is not configured")
 	}
 
@@ -523,10 +529,6 @@ func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, account
 			return nil, "", fmt.Errorf("agent identity shadow credentials are unavailable")
 		}
 	}
-	// WHAM has a narrower header contract than /responses, but it still uses the
-	// same CLI User-Agent as the credential account. This also makes Spark shadow
-	// quota requests inherit the parent account's device/terminal identity.
-	headers["user-agent"] = resolveCodexOutboundIdentity(account.GetOpenAIUserAgent()).userAgent
 	if !account.IsOpenAIAgentIdentity() {
 		return headers, "", nil
 	}
@@ -556,14 +558,20 @@ func (s *OpenAIQuotaService) redactQuotaErrorBody(ctx context.Context, accountID
 	return string(redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, account, []byte(body)))
 }
 
-// buildCodexCommonHeaders mirrors codex-backend-client's WHAM request shape:
-// canonical User-Agent, auth/account routing, and optional FedRAMP only.
+// buildCodexCommonHeaders sets the request headers expected by the chatgpt.com
+// backend so calls succeed past Cloudflare/WASM checks.
 func buildCodexCommonHeaders(accessToken, chatGPTAccountID string, fedRAMP bool) map[string]string {
-	userAgent := CodexCanonicalUserAgent()
 	headers := map[string]string{
 		"authorization":      "Bearer " + accessToken,
 		"chatgpt-account-id": chatGPTAccountID,
-		"user-agent":         userAgent,
+		"openai-beta":        openaiQuotaCodexBeta,
+		"oai-language":       openaiQuotaCodexLanguageTag,
+		"originator":         openaiQuotaCodexOriginator,
+		"accept":             "application/json",
+		"sec-fetch-site":     openaiQuotaSecFetchSite,
+		"sec-fetch-mode":     openaiQuotaSecFetchMode,
+		"sec-fetch-dest":     openaiQuotaSecFetchDest,
+		"priority":           "u=4, i",
 	}
 	if fedRAMP {
 		headers["x-openai-fedramp"] = "true"
@@ -585,47 +593,33 @@ func generateRedeemRequestID() (string, error) {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", hexStr[0:8], hexStr[8:12], hexStr[12:16], hexStr[16:20], hexStr[20:]), nil
 }
 
-func buildCodexQuotaWindowExtraUpdates(usage *OpenAIQuotaUsage, spark bool, now time.Time) map[string]any {
-	if usage == nil {
-		return nil
-	}
-	if !spark {
-		return buildCodexRateLimitWindowExtraUpdates(usage.RateLimit, now)
-	}
-	return buildCodexSparkWindowExtraUpdates(usage, now)
-}
-
 // buildCodexSparkWindowExtraUpdates extracts Codex Spark usage windows from the
-// /wham/usage response body's codex_bengalfox envelope. It writes the same
-// codex_* keys used by normal OAuth accounts so existing scheduling and UI
-// readers remain dimension-agnostic.
+// /wham/usage response body's additional_rate_limits, matching the entry with
+// MeteredFeature == "codex_bengalfox". It produces plain codex_* keys (NOT the
+// Method-Z "codex_spark_" prefix) so that a spark shadow account's extra map
+// is populated with the same key names used by the scheduling / frontend layers.
+// Returns nil when no codex_bengalfox entry is present or when the RateLimit
+// yields no window data.
 func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) map[string]any {
 	if usage == nil {
 		return nil
 	}
-	var rateLimit *OpenAIRateLimit
+	var spark *OpenAIRateLimit
 	for i := range usage.AdditionalRateLimits {
 		a := usage.AdditionalRateLimits[i]
 		if a.MeteredFeature == "codex_bengalfox" {
-			rateLimit = a.RateLimit
+			spark = a.RateLimit
 			break
 		}
 	}
-	return buildCodexRateLimitWindowExtraUpdates(rateLimit, now)
-}
-
-// buildCodexRateLimitWindowExtraUpdates converts a /wham/usage rate-limit
-// envelope into the canonical Extra snapshot consumed by account management.
-// Normalize classifies windows by duration, so primary/secondary ordering does
-// not determine which value is shown as 5h or 7d.
-func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.Time) map[string]any {
-	if rateLimit == nil {
+	if spark == nil {
 		return nil
 	}
+
 	// Reuse OpenAICodexUsageSnapshot / Normalize to map primary/secondary windows
-	// to canonical 5h/7d buckets (the same mapping used for passive response headers).
+	// to canonical 5h/7d buckets (same logic as probeOpenAICodexSnapshot).
 	snap := &OpenAICodexUsageSnapshot{}
-	if w := rateLimit.PrimaryWindow; w != nil {
+	if w := spark.PrimaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.PrimaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)
@@ -633,7 +627,7 @@ func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.
 		wm := int(w.LimitWindowSeconds / 60)
 		snap.PrimaryWindowMinutes = &wm
 	}
-	if w := rateLimit.SecondaryWindow; w != nil {
+	if w := spark.SecondaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.SecondaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)

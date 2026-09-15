@@ -52,49 +52,15 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched(t *testi
 	require.Equal(t, string(body), string(sanitized))
 }
 
-func TestSanitizeOpenAIResponsesToolParameterTypes_MissingFunctionRootTypeAdded(t *testing.T) {
+// 缺失 type 的 Schema 本身合法（等价于不约束），不得补写——补写会收窄客户端语义。
+func TestSanitizeOpenAIResponsesToolParameterTypes_MissingTypeNotInvented(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"function","name":"ok","parameters":{"properties":{}}}]}`)
 
 	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
 
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
-	require.True(t, gjson.GetBytes(sanitized, "tools.0.parameters.properties").IsObject())
-}
-
-func TestSanitizeOpenAIResponsesToolParameterTypes_AutomationOneOfRootTypeAdded(t *testing.T) {
-	body := []byte(`{"tools":[{"type":"function","name":"automation_update","parameters":{"$schema":"https://json-schema.org/draft/2020-12/schema","oneOf":[{"type":"object","properties":{"mode":{"const":"view"}}},{"type":"object","properties":{"mode":{"const":"delete"}}}],"$defs":{"schedule":{"type":"object"}}}}]}`)
-
-	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
-
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
-	require.Len(t, gjson.GetBytes(sanitized, "tools.0.parameters.oneOf").Array(), 2)
-	require.Equal(t, "view", gjson.GetBytes(sanitized, "tools.0.parameters.oneOf.0.properties.mode.const").String())
-	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.$defs.schedule.type").String())
-}
-
-func TestSanitizeOpenAIResponsesToolParameterTypes_MissingCustomRootTypeUntouched(t *testing.T) {
-	body := []byte(`{"tools":[{"type":"custom","name":"freeform","parameters":{"oneOf":[{"type":"string"}]}}]}`)
-
-	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
-
-	require.NoError(t, err)
 	require.False(t, changed)
-	require.Equal(t, string(body), string(sanitized))
-}
-
-func TestSanitizeOpenAIResponsesToolParameterTypes_NullFunctionParametersReplaced(t *testing.T) {
-	body := []byte(`{"tools":[{"type":"function","name":"no_args","parameters":null}]}`)
-
-	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
-
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
-	require.True(t, gjson.GetBytes(sanitized, "tools.0.parameters.properties").IsObject())
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.type").Exists())
 }
 
 func TestSanitizeOpenAIResponsesToolParameterTypes_ObjectOnlyRootUnion(t *testing.T) {
@@ -166,7 +132,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools(t *testing
 						"name": "codex_app",
 						"tools": [
 							{"type": "function", "name": "noop", "parameters": {"type": "object"}},
-							{"type": "function", "name": "automation_update", "parameters": {"oneOf": [{"type": "object"}]}}
+							{"type": "function", "name": "automation_update", "parameters": {"type": null}}
 						]
 					},
 					{"type": "function", "name": "outer", "parameters": {"type": null}}
@@ -370,6 +336,7 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps(t *te
 		{"tools_object", `{"tools":{"type":"function"}}`},
 		{"tool_is_string", `{"tools":["freeform"]}`},
 		{"parameters_is_string", `{"tools":[{"type":"function","parameters":"nope"}]}`},
+		{"parameters_null", `{"tools":[{"type":"function","parameters":null}]}`},
 		{"input_string", `{"input":"hi","tools":[]}`},
 		{"input_item_not_object", `{"input":["hi"]}`},
 		{"type_already_array", `{"tools":[{"type":"function","parameters":{"type":["object","null"]}}]}`},

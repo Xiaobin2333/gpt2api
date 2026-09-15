@@ -334,7 +334,7 @@ func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 	}}, nil)
 
 	require.Equal(t,
-		"codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)",
+		"codex-tui/0.200.1"+codexCLIUserAgentSuffix,
 		svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 	)
 }
@@ -351,7 +351,7 @@ func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
 		}}, nil)
 
 		require.Equal(t,
-			"codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.200.1)",
+			"codex_cli_rs/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
@@ -363,12 +363,12 @@ func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
 		}}, nil)
 
 		require.Equal(t,
-			"codex-tui/0.200.1 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.200.1)",
+			"codex_cli_rs/0.200.1 (Mac OS X 15.1.0; arm64) iTerm.app",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
-	t.Run("其它官方客户端只贡献环境指纹", func(t *testing.T) {
+	t.Run("TUI UA 的首尾两个版本号同时更新", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			SettingKeyOpenAICodexUserAgent:           "codex-tui/0.146.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.146.1)",
 			SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
@@ -389,18 +389,18 @@ func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
 		}}, nil)
 
 		require.Equal(t,
-			"codex-tui/0.150.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.150.0)",
+			"codex_cli_rs/0.150.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
-	// 非 Codex 形态无法提供可信环境指纹，直接回退规范身份。
-	t.Run("非 Codex 形态回退规范身份", func(t *testing.T) {
+	// 非 `{client}/{version}` 形态无法重建，原样返回，由收口整体回退规范身份。
+	t.Run("非 Codex 形态原样返回", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			SettingKeyOpenAICodexUserAgent: "not-a-codex-client",
 		}}, nil)
 
-		require.Equal(t, codexCLIUserAgent, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
+		require.Equal(t, "not-a-codex-client", svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
 	})
 }
 

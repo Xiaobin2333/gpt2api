@@ -20,7 +20,6 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"golang.org/x/net/http2"
 	"golang.org/x/sync/singleflight"
@@ -1075,7 +1074,7 @@ func groupCodexModelSupportsImageInput(
 			return false
 		}
 	}
-	if platform != PlatformOpenAI && platform != PlatformGrok {
+	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek {
 		return false
 	}
 
@@ -1214,7 +1213,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		return false
 	}
 	switch account.Platform {
-	case PlatformOpenAI:
+	case PlatformOpenAI, PlatformDeepseek:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
 				// Official GPT-6 Astra metadata briefly shipped with a stale
@@ -1227,7 +1226,10 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 				return stringSliceContains(modalities, "image")
 			}
 		}
-		if !isOpenAICodexImageInputModel(upstreamModel) {
+		if strings.EqualFold(strings.TrimSpace(upstreamModel), "deepseek-v4-flash-vision-exp") {
+			return account.Type == AccountTypeAPIKey
+		}
+		if account.Platform != PlatformOpenAI || !isOpenAICodexImageInputModel(upstreamModel) {
 			return false
 		}
 		if account.IsOpenAIOAuth() {
@@ -1640,10 +1642,6 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	appendModelsPath := false
 	switch {
 	case credAccount.IsOpenAIOAuth():
-		// Official Codex derives this query value from its compile-time version.
-		// Do not expose a downstream client's independent version on the shared
-		// OAuth credential path.
-		clientVersion = CodexCanonicalClientVersion()
 		authToken = strings.TrimSpace(credAccount.GetOpenAIAccessToken())
 		if authToken == "" && !credAccount.IsOpenAIAgentIdentity() {
 			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
@@ -1697,17 +1695,15 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	headers.Set("Originator", identity.originator)
 	headers.Set("User-Agent", identity.userAgent)
-	if useAPIKeyUpstream {
-		// 自定义 API Key 上游保留既有兼容头；官方 OAuth /models 只通过
-		// client_version 查询参数协商版本，不发送独立 Version 头。
-		headerVersion := NormalizeCodexClientVersion(clientVersion)
-		if headerVersion == "" || CompareVersions(headerVersion, codexUpstreamMinVersion) < 0 {
-			headerVersion = identity.version
-		}
-		headers.Set("Version", headerVersion)
-	} else {
-		headers.Del("Version")
+	// Version 头优先与 client_version 查询参数同源：客户端自报版本合法且不低于上游
+	// 门槛时原样使用；否则回退规范版本，避免陈旧 version 触发上游 404（issue #3901）。
+	// client_version 查询参数本身始终按客户端原值透传（内容协商语义，契约见
+	// TestFetchCodexModelsManifestPassthrough）。
+	headerVersion := NormalizeCodexClientVersion(clientVersion)
+	if headerVersion == "" || CompareVersions(headerVersion, codexUpstreamMinVersion) < 0 {
+		headerVersion = identity.version
 	}
+	headers.Set("Version", headerVersion)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -1870,18 +1866,6 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 		}
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 		resp, err = s.httpUpstream.Do(req, request.proxyURL, request.accountID, request.accountConcurrency)
-	} else if s.httpUpstream != nil {
-		// /models is sent by the same Codex HTTP client as inference/auth requests.
-		// Keep its TLS ClientHello aligned as well; the previous direct Go client
-		// made this otherwise-correct request distinguishable at transport level.
-		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-		resp, err = s.httpUpstream.DoWithTLS(
-			req,
-			request.proxyURL,
-			request.accountID,
-			request.accountConcurrency,
-			tlsfingerprint.CodexHTTPProfile(),
-		)
 	} else {
 		handled := false
 		if s.pluginManager != nil {

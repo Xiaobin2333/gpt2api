@@ -121,6 +121,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 			ValidityDays: sub.ValidityDays,
 		})
 	}
+	cyberSessionBlockGroupPolicies := make([]dto.CyberSessionBlockGroupPolicy, 0, len(settings.CyberSessionBlockGroupPolicies))
+	for _, policy := range settings.CyberSessionBlockGroupPolicies {
+		cyberSessionBlockGroupPolicies = append(cyberSessionBlockGroupPolicies, dto.CyberSessionBlockGroupPolicy{GroupID: policy.GroupID, Enabled: policy.Enabled})
+	}
 
 	// Load payment config
 	var paymentCfg *service.PaymentConfig
@@ -266,6 +270,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RiskControlEnabled:                                     settings.RiskControlEnabled,
 		CyberSessionBlockEnabled:                               settings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds:                            settings.CyberSessionBlockTTLSeconds,
+		CyberSessionBlockGroupPolicies:                         cyberSessionBlockGroupPolicies,
 		AffiliateRebateRate:                                    settings.AffiliateRebateRate,
 		AffiliateRebateFreezeHours:                             settings.AffiliateRebateFreezeHours,
 		AffiliateRebateDurationDays:                            settings.AffiliateRebateDurationDays,
@@ -383,6 +388,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		GrokDefaultBaseURLMode:         settings.GrokDefaultBaseURLMode,
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		SubscriptionEnabled:      settings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,

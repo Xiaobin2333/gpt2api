@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -396,8 +397,8 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	normalized := []byte(`{}`)
-	// Keep the exact Codex CLI compact schema. Unlike a regular Responses request,
-	// compact has no store, stream, include, tool_choice, or client_metadata.
+	// Keep the current Codex /compact schema while still dropping request-scoped
+	// fields such as prompt_cache_key, store, and stream.
 	for _, field := range []string{
 		"model",
 		"input",
@@ -406,8 +407,8 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		"parallel_tool_calls",
 		"reasoning",
 		"service_tier",
-		"prompt_cache_key",
 		"text",
+		"previous_response_id",
 	} {
 		value := gjson.GetBytes(body, field)
 		if !value.Exists() {
@@ -474,7 +475,7 @@ func openAIRequestBodyHasTools(body []byte) bool {
 // ids, and opaque extensions). Callers scope this normalization to OpenAI
 // destinations; compatible providers may still consume their own content.
 func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
-	input := gjson.GetBytes(body, "input")
+	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
@@ -527,6 +528,85 @@ func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, 
 }
 
 func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
+	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
+		return body, false, nil
+	}
+	root := parseRawJSONView(body)
+	input := root.Get("input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+	if !root.IsObject() || !gjson.ValidBytes(body) || !utf8.Valid(body) || hasDuplicateJSONObjectKeys(root) {
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+
+	// Only reasoning metadata needs decoding. Keep large image/tool results as
+	// slices of the original JSON and copy them once into the final request.
+	items := make([]string, 0)
+	changed := false
+	fallback := false
+	var itemErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !item.IsObject() {
+			items = append(items, item.Raw)
+			return true
+		}
+		if hasDuplicateJSONObjectKeys(item) {
+			fallback = true
+			return false
+		}
+		typ := strings.TrimSpace(item.Get("type").String())
+		id := strings.TrimSpace(item.Get("id").String())
+		encrypted := item.Get("encrypted_content")
+		if (typ == "reasoning" && (encrypted.Type != gjson.String || strings.TrimSpace(encrypted.Str) == "")) ||
+			(typ == "item_reference" && strings.HasPrefix(id, "rs_")) {
+			changed = true
+			return true
+		}
+		stripID := typ == "reasoning" && strings.HasPrefix(id, "rs_")
+		addSummary := typ == "reasoning" && item.Get("summary").Type == gjson.Null
+		stripCallID := shouldStripOpenAIResponsesNonPairCallID(typ) && item.Get("call_id").Exists()
+		if !stripID && !addSummary && !stripCallID {
+			items = append(items, item.Raw)
+			return true
+		}
+		var decoded map[string]any
+		if err := decodeOpenAIJSONUseNumber([]byte(item.Raw), &decoded); err != nil {
+			itemErr = err
+			return false
+		}
+		if stripID {
+			delete(decoded, "id")
+		}
+		if addSummary {
+			decoded["summary"] = []any{}
+		}
+		if stripCallID {
+			delete(decoded, "call_id")
+		}
+		encoded, err := marshalOpenAIUpstreamJSON(decoded)
+		if err != nil {
+			itemErr = err
+			return false
+		}
+		items = append(items, string(encoded))
+		changed = true
+		return true
+	})
+	if fallback {
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+	if itemErr != nil {
+		return body, false, fmt.Errorf("normalize API-key store=false reasoning replay: %w", itemErr)
+	}
+	if !changed {
+		return body, false, nil
+	}
+	return replaceOpenAIRawInput(body, input, items), true, nil
+}
+
+// Preserve the decoder's handling of unusual or duplicate-key input objects.
+func normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
 	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
 		return body, false, nil
 	}
@@ -619,16 +699,29 @@ func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel stri
 	return normalized, true, nil
 }
 
+func resolveOpenAICompactSessionID(c *gin.Context) string {
+	if c != nil {
+		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
+			return sessionID
+		}
+		if conversationID := strings.TrimSpace(c.GetHeader("conversation_id")); conversationID != "" {
+			return conversationID
+		}
+		if seed, ok := c.Get(openAICompactSessionSeedKey); ok {
+			if seedStr, ok := seed.(string); ok && strings.TrimSpace(seedStr) != "" {
+				return strings.TrimSpace(seedStr)
+			}
+		}
+	}
+	return uuid.NewString()
+}
+
 // openAIResponsesRequestPathSuffix 返回可拼接到上游 /responses URL 后面的子路径。
 // 不可转发的子路径返回空串（退化为裸 /responses）；真正的拒绝由入口守卫
 // IsForwardableOpenAIResponsesRequestPath 负责。这样即便将来新增路由漏挂守卫，
 // 拼进上游 URL 的也只会是合规片段。
 func openAIResponsesRequestPathSuffix(c *gin.Context) string {
-	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
-	if !recognized {
-		return ""
-	}
-	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
+	suffix, ok := sanitizedUpstreamPathSuffix(rawOpenAIResponsesRequestPathSuffix(c))
 	if !ok {
 		return ""
 	}
@@ -638,47 +731,8 @@ func openAIResponsesRequestPathSuffix(c *gin.Context) string {
 // IsForwardableOpenAIResponsesRequestPath 判断入站请求携带的 /responses 子路径
 // 是否可以安全转发。路由层用它在鉴权后、调度前直接拒绝畸形子路径。
 func IsForwardableOpenAIResponsesRequestPath(c *gin.Context) bool {
-	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
-	if !recognized {
-		return false
-	}
-	_, ok := sanitizedUpstreamPathSuffix(rawSuffix)
+	_, ok := sanitizedUpstreamPathSuffix(rawOpenAIResponsesRequestPathSuffix(c))
 	return ok
-}
-
-// IsForwardableOpenAIOAuthResponsesRequestPath limits ChatGPT Codex OAuth
-// traffic to endpoints emitted by the official client: /responses and the
-// exact legacy /responses/compact endpoint.
-func IsForwardableOpenAIOAuthResponsesRequestPath(c *gin.Context) bool {
-	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
-	if !recognized {
-		return false
-	}
-	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
-	return ok && (suffix == "" || suffix == "/compact")
-}
-
-func openAIResponsesRequestPathSuffixForAccount(c *gin.Context, account *Account) (string, error) {
-	// Some gateway entrypoints (for example /v1/messages and /v1/chat/completions)
-	// translate their request into a Responses payload internally. They have no
-	// client-controlled Responses suffix and therefore target bare /responses.
-	// Keep the strict path checks below for actual /responses ingress only.
-	if c == nil || c.Request == nil || c.Request.URL == nil ||
-		!strings.Contains(strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/"), "/responses") {
-		return "", nil
-	}
-	rawSuffix, recognized := checkedOpenAIResponsesRequestPathSuffix(c)
-	if !recognized {
-		return "", fmt.Errorf("unsupported responses path")
-	}
-	suffix, ok := sanitizedUpstreamPathSuffix(rawSuffix)
-	if !ok {
-		return "", fmt.Errorf("unsupported responses subpath")
-	}
-	if account != nil && account.IsOpenAIOAuth() && suffix != "" && suffix != "/compact" {
-		return "", fmt.Errorf("unsupported OAuth responses subpath")
-	}
-	return suffix, nil
 }
 
 // IsOpenAIResponsesInputTokensRequestPath reports whether the request targets
@@ -687,26 +741,27 @@ func IsOpenAIResponsesInputTokensRequestPath(c *gin.Context) bool {
 	return openAIResponsesRequestPathSuffix(c) == "/input_tokens"
 }
 
-func checkedOpenAIResponsesRequestPathSuffix(c *gin.Context) (string, bool) {
+// rawOpenAIResponsesRequestPathSuffix 仅做提取，不做任何安全判断。
+func rawOpenAIResponsesRequestPathSuffix(c *gin.Context) string {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return "", false
+		return ""
 	}
 	normalizedPath := strings.TrimRight(strings.TrimSpace(c.Request.URL.Path), "/")
 	if normalizedPath == "" {
-		return "", false
+		return ""
 	}
 	idx := strings.LastIndex(normalizedPath, "/responses")
 	if idx < 0 {
-		return "", false
+		return ""
 	}
 	suffix := normalizedPath[idx+len("/responses"):]
 	if suffix == "" || suffix == "/" {
-		return "", true
+		return ""
 	}
 	if !strings.HasPrefix(suffix, "/") {
-		return "", false
+		return ""
 	}
-	return suffix, true
+	return suffix
 }
 
 func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
@@ -1007,6 +1062,19 @@ func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any) bo
 		delete(reqBody, "commands")
 		changed = true
 	}
+	// Codex can attach internal message metadata when a custom provider is
+	// named OpenAI. ChatGPT rejects this field on input items (#7066).
+	input, _ := reqBody["input"].([]any)
+	for _, value := range input {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := item["internal_chat_message_metadata_passthrough"]; exists {
+			delete(item, "internal_chat_message_metadata_passthrough")
+			changed = true
+		}
+	}
 	return changed
 }
 
@@ -1037,6 +1105,22 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 		next, err := sjson.DeleteBytes(normalized, "commands")
 		if err != nil {
 			return body, false, fmt.Errorf("normalize oauth responses delete commands: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
+	// Only remove the input-item field, never same-named user content.
+	input := gjson.GetBytes(normalized, "input")
+	if !input.IsArray() {
+		return normalized, changed, nil
+	}
+	for i, item := range input.Array() {
+		if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
+		if err != nil {
+			return body, false, fmt.Errorf("normalize oauth input metadata: %w", err)
 		}
 		normalized = next
 		changed = true
@@ -1302,14 +1386,6 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	}
 
 	if compact {
-		if clientMetadata := gjson.GetBytes(normalized, "client_metadata"); clientMetadata.Exists() {
-			next, err := sjson.DeleteBytes(normalized, "client_metadata")
-			if err != nil {
-				return body, false, fmt.Errorf("normalize passthrough body delete compact client_metadata: %w", err)
-			}
-			normalized = next
-			changed = true
-		}
 		if store := gjson.GetBytes(normalized, "store"); store.Exists() {
 			next, err := sjson.DeleteBytes(normalized, "store")
 			if err != nil {
@@ -1343,11 +1419,6 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 			normalized = next
 			changed = true
 		}
-	}
-
-	if sanitized, sanitizedChanged := sanitizeCodexOAuthJSONBody(normalized); sanitizedChanged {
-		normalized = sanitized
-		changed = true
 	}
 
 	return normalized, changed, nil
@@ -1563,7 +1634,7 @@ func (e *OpenAIFastBlockedError) Error() string { return e.Message }
 // Matching rules:
 //   - Scope filters by account type (all / oauth / apikey / bedrock)
 //   - UserIDs, when present, filters by the trusted Sub2API user that owns the API key
-//   - ServiceTier must be empty (= any), "all", or equal the normalized tier
+//   - ServiceTier must be empty (= any), "all", "missing", or equal the normalized tier
 //   - ModelWhitelist narrows the rule to specific models; FallbackAction
 //     handles the non-matching case (default: pass)
 //   - User-specific rules take precedence over global rules; each group keeps
@@ -1596,6 +1667,18 @@ func (s *OpenAIGatewayService) evaluateOpenAIFastPolicy(ctx context.Context, acc
 	return evaluateOpenAIFastPolicyWithSettings(settings, openAIFastPolicyUserID(ctx), account, model, tier)
 }
 
+// shouldForceOpenAIFastPriorityForMissingTier reports whether a request that
+// omitted service_tier should be upgraded to priority. This is opt-in through
+// the dedicated "missing" tier matcher; legacy "all" rules continue to apply
+// only to requests that explicitly selected a recognized tier.
+func (s *OpenAIGatewayService) shouldForceOpenAIFastPriorityForMissingTier(ctx context.Context, account *Account, model string) bool {
+	if account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	action, _ := s.evaluateOpenAIFastPolicy(ctx, account, model, OpenAIFastTierMissing)
+	return action == OpenAIFastPolicyActionForcePriority
+}
+
 // evaluateOpenAIFastPolicyWithSettings is the pure-function core extracted so
 // long-lived sessions (e.g. WS) can prefetch settings once and avoid hitting
 // the settingService on every frame. See WSSession entry and
@@ -1618,7 +1701,11 @@ func evaluateOpenAIFastPolicyWithSettings(settings *OpenAIFastPolicySettings, us
 				continue
 			}
 			ruleTier := strings.ToLower(strings.TrimSpace(rule.ServiceTier))
-			if ruleTier != "" && ruleTier != OpenAIFastTierAny && ruleTier != tier {
+			if tier == OpenAIFastTierMissing {
+				if ruleTier != OpenAIFastTierMissing {
+					continue
+				}
+			} else if ruleTier != "" && ruleTier != OpenAIFastTierAny && ruleTier != tier {
 				continue
 			}
 			eff := BetaPolicyRule{
@@ -1723,6 +1810,13 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 	}
 	rawTier := gjson.GetBytes(body, "service_tier").String()
 	if rawTier == "" {
+		if s.shouldForceOpenAIFastPriorityForMissingTier(ctx, account, model) {
+			updated, err := sjson.SetBytes(body, "service_tier", OpenAIFastTierPriority)
+			if err != nil {
+				return body, fmt.Errorf("force missing service_tier priority on body: %w", err)
+			}
+			return updated, nil
+		}
 		return body, nil
 	}
 	normTier := normalizedOpenAIServiceTierValue(rawTier)
@@ -1842,6 +1936,13 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	}
 	rawTier := gjson.GetBytes(frame, "service_tier").String()
 	if rawTier == "" {
+		if s.shouldForceOpenAIFastPriorityForMissingTier(ctx, account, model) {
+			updated, err := sjson.SetBytes(frame, "service_tier", OpenAIFastTierPriority)
+			if err != nil {
+				return frame, nil, fmt.Errorf("force missing service_tier priority in ws frame: %w", err)
+			}
+			return updated, nil, nil
+		}
 		return frame, nil, nil
 	}
 	normTier := normalizedOpenAIServiceTierValue(rawTier)
@@ -2218,7 +2319,8 @@ func supportsOpenAIReasoningEffortMax(model string) bool {
 	normalized := strings.ToLower(lastOpenAIModelSegment(model))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	switch {
-	case strings.HasPrefix(normalized, "deepseek-v4"):
+	case strings.HasPrefix(normalized, "deepseek-v4"), strings.HasPrefix(normalized, "deepseek-flash"):
+		// deepseek-flash（= DeepSeek-V4.1-Flash）与 v4 系同为 low/high/max 档位。
 		return true
 	case strings.HasPrefix(normalized, "glm-"):
 		return true

@@ -69,7 +69,6 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		Status:   StatusActive,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-spark-parent",
-			"user_agent":         "codex_cli_rs/0.125.0 (Debian 13.0.0; aarch64) xterm-256color",
 		},
 	}
 
@@ -90,10 +89,8 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 	// httptest server: records the chatgpt-account-id header and returns a
 	// synthetic OpenAIQuotaUsage with codex_bengalfox 5h+7d windows.
 	var capturedAccountID string
-	var capturedUserAgent string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedAccountID = r.Header.Get("chatgpt-account-id")
-		capturedUserAgent = r.Header.Get("user-agent")
 		w.Header().Set("content-type", "application/json")
 		resp := OpenAIQuotaUsage{
 			AdditionalRateLimits: []OpenAIAdditionalRateLimit{
@@ -132,8 +129,6 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 	// Assertion A-1: upstream received the PARENT's chatgpt-account-id.
 	require.Equal(t, "org-spark-parent", capturedAccountID,
 		"QueryUsage must use parent's chatgpt-account-id for spark shadow accounts")
-	require.Equal(t, "codex-tui/"+codexCLIVersion+" (Debian 13.0.0; aarch64) xterm-256color (codex-tui; "+codexCLIVersion+")", capturedUserAgent,
-		"QueryUsage must use parent's normalized Codex User-Agent for spark shadow accounts")
 
 	// Assertion A-2: shadow Extra was persisted with codex_5h_used_percent.
 	select {
@@ -153,78 +148,4 @@ func TestGetOpenAIUsage_SparkShadow_WritesExtraAndReturnsNonEmptyWindows(t *test
 		"returned UsageInfo.FiveHour must be non-nil (rebuild from merged Extra must happen)")
 	require.NotNil(t, usage.SevenDay,
 		"returned UsageInfo.SevenDay must be non-nil (rebuild from merged Extra must happen)")
-}
-
-func TestGetOpenAIUsage_NormalOAuth_RefreshesMainRateLimit(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	account := &Account{
-		ID:       300,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Status:   StatusActive,
-		Credentials: map[string]any{
-			"chatgpt_account_id": "org-normal",
-		},
-		Extra: map[string]any{
-			"codex_usage_updated_at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-			"codex_5h_used_percent":  1.0,
-			"codex_7d_used_percent":  2.0,
-		},
-	}
-	updateExtraCh := make(chan map[string]any, 1)
-	repo := &sparkShadowUsageTestRepo{
-		accounts:      map[int64]*Account{account.ID: account},
-		updateExtraCh: updateExtraCh,
-	}
-	tokenProvider := NewOpenAITokenProvider(repo, &stubQuotaTokenCache{tokens: map[string]string{
-		OpenAITokenCacheKey(account): "fake-access-token",
-	}}, nil)
-
-	var usageCalls int
-	var capturedAccountID string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/backend-api/wham/usage" {
-			http.NotFound(w, r)
-			return
-		}
-		usageCalls++
-		capturedAccountID = r.Header.Get("chatgpt-account-id")
-		w.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(w).Encode(OpenAIQuotaUsage{RateLimit: &OpenAIRateLimit{
-			// Reverse the usual ordering to prove classification uses duration.
-			PrimaryWindow: &OpenAIRateLimitWindow{
-				UsedPercent:        72,
-				ResetAfterSeconds:  86400,
-				LimitWindowSeconds: 604800,
-			},
-			SecondaryWindow: &OpenAIRateLimitWindow{
-				UsedPercent:        31,
-				ResetAfterSeconds:  3600,
-				LimitWindowSeconds: 18000,
-			},
-		}})
-	}))
-	defer srv.Close()
-
-	svc := &AccountUsageService{
-		accountRepo:        repo,
-		openAIQuotaService: NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(srv)),
-	}
-	usage, err := svc.getOpenAIUsage(ctx, account, true)
-	require.NoError(t, err)
-	require.Equal(t, 1, usageCalls)
-	require.Equal(t, "org-normal", capturedAccountID)
-	require.NotNil(t, usage.FiveHour)
-	require.NotNil(t, usage.SevenDay)
-	require.InDelta(t, 31, usage.FiveHour.Utilization, 0.01)
-	require.InDelta(t, 72, usage.SevenDay.Utilization, 0.01)
-
-	select {
-	case updates := <-updateExtraCh:
-		require.InDelta(t, 31, updates["codex_5h_used_percent"], 0.01)
-		require.InDelta(t, 72, updates["codex_7d_used_percent"], 0.01)
-	case <-time.After(2 * time.Second):
-		t.Fatal("normal OAuth quota snapshot was not persisted")
-	}
 }

@@ -2157,7 +2157,7 @@ func TestOpenAIGatewayService_SelectAccountWithLoadAwareness_DBFreshGroupRecheck
 	require.Equal(t, staleBackup.ID, selection.WaitPlan.AccountID)
 }
 
-func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_SimpleModeUsesFullPool(t *testing.T) {
+func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_SimpleModeHonorsExplicitGroup(t *testing.T) {
 	grouped := Account{ID: 34301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{99}}
 	svc := &OpenAIGatewayService{
 		accountRepo:       schedulerTestOpenAIAccountRepo{accounts: []Account{grouped}},
@@ -2166,11 +2166,14 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_SimpleModeUsesF
 	}
 	requestedGroupID := int64(100)
 
-	for _, groupID := range []*int64{nil, &requestedGroupID} {
-		fresh := svc.recheckSelectedOpenAIAccountFromDB(context.Background(), &grouped, groupID, PlatformOpenAI, "gpt-5.1", false, "")
-		require.NotNil(t, fresh)
-		require.Equal(t, grouped.ID, fresh.ID)
-	}
+	fresh := svc.recheckSelectedOpenAIAccountFromDB(context.Background(), &grouped, nil, PlatformOpenAI, "gpt-5.1", false, "")
+	require.NotNil(t, fresh)
+	require.Equal(t, grouped.ID, fresh.ID)
+	fresh = svc.recheckSelectedOpenAIAccountFromDB(context.Background(), &grouped, &requestedGroupID, PlatformOpenAI, "gpt-5.1", false, "")
+	require.Nil(t, fresh)
+	matchingGroupID := int64(99)
+	fresh = svc.recheckSelectedOpenAIAccountFromDB(context.Background(), &grouped, &matchingGroupID, PlatformOpenAI, "gpt-5.1", false, "")
+	require.NotNil(t, fresh)
 
 	ungrouped := grouped
 	ungrouped.ID++

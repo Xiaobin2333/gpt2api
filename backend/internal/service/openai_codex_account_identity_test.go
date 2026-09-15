@@ -126,53 +126,6 @@ func TestCodexAccountIdentitySourceResolvesShadowAndOverwritesFailoverContext(t 
 	require.Same(t, next, codexAccountIdentitySource(c, shadow))
 }
 
-func TestCodexFingerprintUsesResolvedShadowParentIdentity(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	c.Request.Header.Set("session-id", "client-session")
-
-	parentID := int64(21)
-	parent := &Account{
-		ID:       parentID,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Extra: map[string]any{
-			codexFingerprintModeExtraKey: "full",
-			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
-			"openai_device_id":           "parent-device",
-		},
-	}
-	shadow := &Account{
-		ID:              210,
-		ParentAccountID: &parentID,
-		Platform:        PlatformOpenAI,
-		Type:            AccountTypeOAuth,
-		Extra: map[string]any{
-			codexFingerprintModeExtraKey: "off",
-			codexFingerprintSeedExtraKey: "22222222-2222-4222-8222-222222222222",
-			"openai_device_id":           "shadow-device",
-		},
-	}
-	service := &OpenAIGatewayService{accountRepo: &codexAccountIdentityRepoStub{account: parent}}
-	_, err := service.prepareCodexAccountIdentitySource(context.Background(), c, shadow)
-	require.NoError(t, err)
-
-	ids := resolveCodexFingerprintIDsForPayload(c, shadow, c.Request.Header, nil, "")
-	require.NotNil(t, ids)
-	require.Equal(t, parent.ID, ids.accountID)
-	require.Equal(t, codexFingerprintFull, ids.mode)
-	require.Equal(t, resolveConvergedInstallationID(parent, testCodexFingerprintSeed), ids.installationID)
-	require.NotEqual(t, resolveConvergedInstallationID(shadow, "22222222-2222-4222-8222-222222222222"), ids.installationID)
-
-	stageCodexFingerprintIDs(c, ids)
-	require.Same(t, ids, stagedCodexFingerprintIDs(c, shadow))
-
-	parent.Extra[codexFingerprintModeExtraKey] = "off"
-	require.Nil(t, resolveCodexFingerprintIDsForPayload(c, shadow, c.Request.Header, nil, ""), "parent off mode must override shadow-local defaults")
-}
-
 func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

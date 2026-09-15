@@ -141,9 +141,10 @@ type cachedCodexRestrictionPolicy struct {
 // cachedCyberSessionBlockRuntime cyber 会话屏蔽开关+TTL 进程内缓存（60s TTL）。
 // GetCyberSessionBlockRuntime 在网关请求热路径上被调用，避免每次访问 DB。
 type cachedCyberSessionBlockRuntime struct {
-	enabled   bool
-	ttl       time.Duration
-	expiresAt int64 // unix nano
+	enabled       bool
+	ttl           time.Duration
+	groupPolicies map[int64]bool
+	expiresAt     int64 // unix nano
 }
 
 const cyberSessionBlockRuntimeCacheTTL = 60 * time.Second
@@ -161,9 +162,16 @@ const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings
 // 两个 setting key 在单次 singleflight 里一起读取，减少 DB 往返。
 // 默认值：开关 false，TTL 1h（与粘性会话对齐）。
 func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration) {
+	return s.GetCyberSessionBlockRuntimeForGroup(ctx, nil)
+}
+
+// GetCyberSessionBlockRuntimeForGroup resolves the global cyber session block
+// switch and an optional per-group override. An absent group policy falls back
+// to the global switch; nil group IDs always use the global value.
+func (s *SettingService) GetCyberSessionBlockRuntimeForGroup(ctx context.Context, groupID *int64) (bool, time.Duration) {
 	if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
-			return cached.enabled, cached.ttl
+			return resolveCyberSessionBlockGroupEnabled(cached, groupID), cached.ttl
 		}
 	}
 	result, _, _ := s.cyberSessionBlockRuntimeSF.Do("cyber_session_block_runtime", func() (any, error) {
@@ -177,13 +185,15 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 
 		enabledVal, enabledErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockEnabled)
 		ttlVal, ttlErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockTTLSeconds)
+		policiesVal, policiesErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockGroupPolicies)
 
 		if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
 			slog.Warn("failed to get cyber_session_block_enabled setting", "error", enabledErr)
 			entry := &cachedCyberSessionBlockRuntime{
-				enabled:   false,
-				ttl:       time.Hour,
-				expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano(),
+				enabled:       false,
+				ttl:           time.Hour,
+				groupPolicies: map[int64]bool{},
+				expiresAt:     time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano(),
 			}
 			s.cyberSessionBlockRuntimeCache.Store(entry)
 			return entry, nil
@@ -198,18 +208,35 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 			}
 		}
 
+		groupPolicies := make(map[int64]bool)
+		if policiesErr == nil {
+			for _, policy := range parseCyberSessionBlockGroupPolicies(policiesVal) {
+				groupPolicies[policy.GroupID] = policy.Enabled
+			}
+		}
 		entry := &cachedCyberSessionBlockRuntime{
-			enabled:   enabled,
-			ttl:       ttl,
-			expiresAt: time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
+			enabled:       enabled,
+			ttl:           ttl,
+			groupPolicies: groupPolicies,
+			expiresAt:     time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
 		}
 		s.cyberSessionBlockRuntimeCache.Store(entry)
 		return entry, nil
 	})
 	if entry, ok := result.(*cachedCyberSessionBlockRuntime); ok && entry != nil {
-		return entry.enabled, entry.ttl
+		return resolveCyberSessionBlockGroupEnabled(entry, groupID), entry.ttl
 	}
 	return false, time.Hour
+}
+
+func resolveCyberSessionBlockGroupEnabled(runtime *cachedCyberSessionBlockRuntime, groupID *int64) bool {
+	if runtime == nil || groupID == nil || *groupID <= 0 {
+		return runtime != nil && runtime.enabled
+	}
+	if enabled, ok := runtime.groupPolicies[*groupID]; ok {
+		return enabled
+	}
+	return runtime.enabled
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。
@@ -380,9 +407,9 @@ func (s *SettingService) InvalidateOpenAICodexClientVersionCache() {
 // GetOpenAICodexCanonicalUserAgent 返回出站规范 Codex User-Agent。
 // 未填面板 UA 时按当前生效的客户端版本号拼出标准 Codex TUI UA。
 //
-// 面板 UA 只贡献 OS / 架构 / 终端指纹，客户端身份与版本段一律按真实 Codex TUI
-// 重建：该输入框是唯一能改环境指纹的地方，但不能把共享 OAuth 的出站产品身份切换成
-// VSCode/Desktop，也不能用历史版本绕过自动同步。
+// 面板 UA 只贡献客户端名与 OS / 架构 / 终端指纹，版本段一律用生效版本重建：该输入框是
+// 唯一能改 UA 后缀的地方，但它填写于某个历史版本，逐字沿用会把出站身份永久钉死在陈旧
+// 版本上并绕过自动同步——而陈旧身份正是上游优先降载的那一侧。
 // 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
 func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) string {
 	if s == nil {
@@ -393,10 +420,12 @@ func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) s
 	if ua == "" {
 		return buildCodexCLIUserAgent(version)
 	}
-	if rebuilt, ok := buildCodexTUIUserAgentFromFingerprint(ua, version); ok {
+	if rebuilt := openai.SetCodexUserAgentVersion(ua, version); rebuilt != "" {
 		return rebuilt
 	}
-	return buildCodexCLIUserAgent(version)
+	// 非 `{client}/{version}` 形态：交给 PairCodexClientIdentity 判定，
+	// 推导不出官方身份时由收口整体回退规范身份。
+	return ua
 }
 
 var legacyClaudeCodeCodexWhitelistEntry = openai.AllowedClientEntry{

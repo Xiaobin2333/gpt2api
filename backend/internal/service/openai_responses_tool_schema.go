@@ -22,7 +22,6 @@ const (
 	openAIResponsesObjectUnionMaxDepth   = 32
 
 	openAIResponsesToolSchemaFallbackType = `"object"`
-	openAIResponsesEmptyObjectSchema      = `{"type":"object","properties":{}}`
 )
 
 var errOpenAIResponsesToolSchemaLimit = errors.New("OpenAI Responses tool schema safety limit exceeded")
@@ -239,7 +238,6 @@ func (p *openAIResponsesToolSchemaParser) parseObject(
 	parameterCount := 0
 	parameterValueStart := -1
 	parameterValueEnd := -1
-	functionTool := false
 	for {
 		p.skipWhitespace()
 		memberStart := p.pos
@@ -267,9 +265,6 @@ func (p *openAIResponsesToolSchemaParser) parseObject(
 			if value, ok := decodeOpenAIResponsesJSONStringValue(p.body[valueStart:valueEnd]); ok {
 				p.probeType = strings.TrimSpace(value)
 			}
-		}
-		if context == openAIResponsesToolSchemaTool && openAIResponsesJSONStringEquals(key, "type") {
-			functionTool = openAIResponsesJSONStringEquals(p.body[valueStart:valueEnd], "function")
 		}
 		if (context == openAIResponsesToolSchemaTool || context == openAIResponsesToolSchemaFunction) &&
 			openAIResponsesJSONStringEquals(key, "parameters") {
@@ -333,8 +328,7 @@ func (p *openAIResponsesToolSchemaParser) parseObject(
 			}
 		}
 		if p.options.injectObjectUnionRootObjectType &&
-			(context == openAIResponsesToolSchemaFunction ||
-				(context == openAIResponsesToolSchemaTool && functionTool)) &&
+			(context == openAIResponsesToolSchemaTool || context == openAIResponsesToolSchemaFunction) &&
 			parameterCount == 1 && parameterValueStart >= 0 {
 			if edit, ok := openAIMissingRootObjectUnionTypeEdit(
 				p.body[parameterValueStart:parameterValueEnd], parameterValueStart,
@@ -359,78 +353,22 @@ func openAIMissingRootObjectUnionTypeEdit(raw []byte, absoluteStart int) (openAI
 	if len(raw) > openAIResponsesObjectUnionMaxSize {
 		return openAIResponsesToolSchemaEdit{}, false
 	}
-	if bytes.Equal(raw, []byte("null")) {
-		return openAIResponsesToolSchemaEdit{
-			start:       absoluteStart,
-			end:         absoluteStart + len(raw),
-			replacement: openAIResponsesEmptyObjectSchema,
-		}, true
-	}
-	// The streaming parser already repairs a present root type:null. Detect the
-	// root key without decoding the whole schema so nested union branch types do
-	// not suppress a valid root repair and common repairs remain allocation-flat.
-	if openAIResponsesTopLevelObjectHasKey(raw, "type") {
-		return openAIResponsesToolSchemaEdit{}, false
-	}
 	if !bytes.Contains(raw, openAIResponsesJSONOneOfKey) && !bytes.Contains(raw, openAIResponsesJSONAnyOfKey) &&
-		!bytes.Contains(raw, []byte(`"properties"`)) && !bytes.Contains(raw, openAIResponsesJSONEscapeNeedle) {
+		!bytes.Contains(raw, openAIResponsesJSONEscapeNeedle) {
 		return openAIResponsesToolSchemaEdit{}, false
 	}
 	var schema map[string]json.RawMessage
 	if len(raw) < 2 || raw[0] != '{' || json.Unmarshal(raw, &schema) != nil {
 		return openAIResponsesToolSchemaEdit{}, false
 	}
-	if _, hasType := schema["type"]; hasType {
+	if _, hasType := schema["type"]; hasType || !openAIResponsesSchemaHasObjectOnlyUnion(schema, 0) {
 		return openAIResponsesToolSchemaEdit{}, false
-	}
-	hasProperties := openAIResponsesTopLevelObjectHasKey(raw, "properties")
-	if !hasProperties && !openAIResponsesSchemaHasObjectOnlyUnion(schema, 0) {
-		return openAIResponsesToolSchemaEdit{}, false
-	}
-	replacement := `"type":"object"`
-	if len(schema) > 0 {
-		replacement += ","
 	}
 	return openAIResponsesToolSchemaEdit{
 		start:       absoluteStart + 1,
 		end:         absoluteStart + 1,
-		replacement: replacement,
+		replacement: `"type":"object",`,
 	}, true
-}
-
-func openAIResponsesTopLevelObjectHasKey(raw []byte, want string) bool {
-	p := openAIResponsesToolSchemaParser{body: raw}
-	p.skipWhitespace()
-	if !p.consume('{') {
-		return false
-	}
-	p.skipWhitespace()
-	if p.consume('}') {
-		return false
-	}
-	for {
-		p.skipWhitespace()
-		keyStart, keyEnd, err := p.parseString()
-		if err != nil {
-			return false
-		}
-		matches := openAIResponsesJSONStringEquals(raw[keyStart:keyEnd], want)
-		p.skipWhitespace()
-		if !p.consume(':') {
-			return false
-		}
-		if err := p.parseValue(openAIResponsesToolSchemaSkip, false, 1); err != nil {
-			return false
-		}
-		if matches {
-			return true
-		}
-		p.skipWhitespace()
-		if p.consume(',') {
-			continue
-		}
-		return false
-	}
 }
 
 func openAIResponsesSchemaHasObjectOnlyUnion(schema map[string]json.RawMessage, depth int) bool {

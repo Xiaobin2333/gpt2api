@@ -817,7 +817,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	require.Contains(t, gjson.Get(nonLitePayload, "instructions").String(), "image_generation")
 	require.False(t, gjson.Get(nonLitePayload, "reasoning.context").Exists())
 	require.True(t, gjson.Get(nonLitePayload, "parallel_tool_calls").Bool())
-	require.False(t, gjson.Get(nonLitePayload, "sequence").Exists(), "non-Codex top-level fields must not reach upstream")
+	require.Equal(t, "900719925474099312345", gjson.Get(nonLitePayload, "sequence").Raw)
 
 	litePayload := requestToJSONString(captureConn.writes[1])
 	require.False(t, gjson.Get(litePayload, `tools.#(type=="image_generation")`).Exists())
@@ -1253,7 +1253,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 	}
 }
 
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultSessionConvergesSessionAndTurnState(t *testing.T) {
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughHeadersUsePromptCacheAndTurnState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -1298,9 +1298,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultSessionCo
 			"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
 		},
 	}
-	expectedIDs := resolveCodexFingerprintIDs(account, "pcache_passthrough", account.GetCodexFingerprintMode())
-	require.NotNil(t, expectedIDs)
-	require.Equal(t, codexFingerprintSession, expectedIDs.mode)
 
 	serverErrCh := make(chan error, 1)
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1380,19 +1377,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DefaultSessionCo
 		t.Fatal("等待 passthrough websocket 结束超时")
 	}
 
-	require.Equal(t, expectedIDs.sessionID, captureDialer.lastHeaders.Get("session-id"))
-	require.NotEqual(t, "pcache_passthrough", captureDialer.lastHeaders.Get("session-id"))
-	require.Empty(t, captureDialer.lastHeaders.Get("session_id"))
+	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "pcache_passthrough"), captureDialer.lastHeaders.Get("session_id"))
 	require.Equal(t, "turn-state-1", captureDialer.lastHeaders.Get(openAIWSTurnStateHeader))
+	require.Equal(t, "turn-meta-1", captureDialer.lastHeaders.Get(openAIWSTurnMetadataHeader))
 	require.Len(t, upstreamConn.writes, 1)
 	forwarded := requestToJSONString(upstreamConn.writes[0])
-	bodyTurnMetadata := gjson.Get(forwarded, "client_metadata.x-codex-turn-metadata").String()
-	headerTurnMetadata := captureDialer.lastHeaders.Get(openAIWSTurnMetadataHeader)
-	require.NotEmpty(t, bodyTurnMetadata, forwarded)
-	require.Equal(t, expectedIDs.sessionID, gjson.Get(bodyTurnMetadata, "session_id").String())
-	require.NotEmpty(t, gjson.Get(bodyTurnMetadata, "turn_id").String())
-	require.JSONEq(t, bodyTurnMetadata, headerTurnMetadata,
-		"opaque input metadata must be replaced by the canonical compatibility snapshot")
 	require.False(t, gjson.Get(forwarded, `tools.#(type=="namespace")`).Exists())
 	require.Equal(t, "collaboration", gjson.Get(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.Get(forwarded, "tool_choice.type").String())

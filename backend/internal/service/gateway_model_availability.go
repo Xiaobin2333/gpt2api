@@ -83,7 +83,7 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 		if groupID == nil && s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 			includeGrouped = true
 		}
-	} else if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+	} else if groupID == nil && s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		queryGroupID = nil
 		includeGrouped = true
 	}

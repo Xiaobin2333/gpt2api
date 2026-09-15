@@ -26,8 +26,7 @@ import (
 )
 
 type codexModelsHTTPUpstreamStub struct {
-	do             func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
-	lastTLSProfile *tlsfingerprint.Profile
+	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
 }
 
 type codexModelsVisibilityAccountRepo struct {
@@ -786,6 +785,81 @@ func TestBuildCodexModelsManifestForGroupUsesProviderImageCapabilities(t *testin
 	}
 }
 
+func TestBuildCodexModelsManifestForGroupUsesDeepSeekVisionCapabilities(t *testing.T) {
+	t.Parallel()
+
+	const visionModel = "deepseek-v4-flash-vision-exp"
+	newAccount := func(id int64, platform, model string, modalities []string) Account {
+		account := Account{
+			ID: id, Platform: platform, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"model_mapping": map[string]any{"vision-alias": model}},
+		}
+		if modalities != nil {
+			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+				model: {ID: model, InputModalities: modalities},
+			}})
+		}
+		return account
+	}
+
+	tests := []struct {
+		name       string
+		platform   string
+		accounts   []Account
+		modalities []any
+	}{
+		{
+			name: "native DeepSeek", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "OpenAI-compatible DeepSeek", platform: PlatformOpenAI,
+			accounts:   []Account{newAccount(1, PlatformOpenAI, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "Composite DeepSeek alias", platform: PlatformComposite,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "text-only DeepSeek Flash", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, "deepseek-v4-flash", nil)},
+			modalities: []any{"text"},
+		},
+		{
+			name: "explicit text-only metadata", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, []string{"text"})},
+			modalities: []any{"text"},
+		},
+		{
+			name: "mixed vision and text-only alias", platform: PlatformDeepseek,
+			accounts: []Account{
+				newAccount(1, PlatformDeepseek, visionModel, nil),
+				newAccount(2, PlatformDeepseek, "deepseek-v4-flash", nil),
+			},
+			modalities: []any{"text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const groupID int64 = 790
+			svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+				groupID: tt.accounts,
+			}}}
+			body, err := svc.BuildCodexModelsManifestForGroup(context.Background(),
+				&Group{ID: groupID, Platform: tt.platform}, "", []string{"vision-alias"})
+			require.NoError(t, err)
+			models := decodeCodexManifestModels(t, body)
+			require.Len(t, models, 1)
+			require.Equal(t, tt.modalities, models[0]["input_modalities"])
+		})
+	}
+}
+
 func TestBuildCodexModelsManifestForGroupPrefersSyncedOpenAIImageCapabilities(t *testing.T) {
 	t.Parallel()
 
@@ -1488,37 +1562,8 @@ func (s *codexModelsHTTPUpstreamStub) Do(req *http.Request, proxyURL string, acc
 	return s.do(req, proxyURL, accountID, accountConcurrency)
 }
 
-func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	s.lastTLSProfile = profile
+func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return s.Do(req, proxyURL, accountID, accountConcurrency)
-}
-
-func TestFetchCodexModelsManifestOAuthUsesCodexTLSProfile(t *testing.T) {
-	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
-		require.Equal(t, "proxy", proxyURL)
-		require.Equal(t, int64(42), accountID)
-		require.Equal(t, 3, accountConcurrency)
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
-		}, nil
-	}}
-	svc := &OpenAIGatewayService{httpUpstream: upstream}
-
-	manifest, err := svc.fetchCodexModelsManifestUpstream(context.Background(), openAIModelsRequest{
-		url:                "https://chatgpt.com/backend-api/codex/models?client_version=0.149.1",
-		headers:            http.Header{"User-Agent": {codexCLIUserAgent}},
-		proxyURL:           "proxy",
-		accountID:          42,
-		accountConcurrency: 3,
-	}, "")
-
-	require.NoError(t, err)
-	require.JSONEq(t, `{"models":[]}`, string(manifest.Body))
-	require.NotNil(t, upstream.lastTLSProfile)
-	require.Equal(t, "codex-cli-0.149.1-http", upstream.lastTLSProfile.Name)
 }
 
 func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
@@ -1655,13 +1700,12 @@ func newCodexModelsTestAccount() *Account {
 func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	manifestBody := `{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}`
 
-	var gotAuth, gotAccountID, gotOriginator, gotClientVersion, gotVersionHeader string
+	var gotAuth, gotAccountID, gotOriginator, gotClientVersion string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotAccountID = r.Header.Get("chatgpt-account-id")
 		gotOriginator = r.Header.Get("Originator")
 		gotClientVersion = r.URL.Query().Get("client_version")
-		gotVersionHeader = r.Header.Get("Version")
 		w.Header().Set("ETag", `W/"abc123"`)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(manifestBody))
@@ -1693,11 +1737,8 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	if gotOriginator != openai.CodexDefaultOriginator {
 		t.Errorf("originator header: got %q", gotOriginator)
 	}
-	if gotClientVersion != CodexCanonicalClientVersion() {
-		t.Errorf("client_version query: got %q, want canonical %q", gotClientVersion, CodexCanonicalClientVersion())
-	}
-	if gotVersionHeader != "" {
-		t.Errorf("OAuth models request must not send Version header: got %q", gotVersionHeader)
+	if gotClientVersion != "0.137.0" {
+		t.Errorf("client_version query: got %q", gotClientVersion)
 	}
 }
 

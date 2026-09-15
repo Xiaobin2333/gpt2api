@@ -260,8 +260,7 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "", gjson.GetBytes(upstream.lastBody, "instructions").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
-	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"))
-	require.Empty(t, upstream.lastReq.Header.Get("Session_Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
 	require.Empty(t, upstream.lastReq.Header.Get("Conversation_Id"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
@@ -473,45 +472,6 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	body := rec.Body.String()
 	require.Contains(t, body, "apply_patch")
 	require.NotContains(t, body, "\"name\":\"edit\"")
-}
-
-func TestOpenAIGatewayService_OAuthPassthrough_StripsMismatchedCustomToolCallID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.148.0")
-
-	body := []byte(`{
-		"model":"gpt-5.5",
-		"stream":false,
-		"instructions":"local-test-instructions",
-		"input":[
-			{"type":"custom_tool_call","id":"fc_wrong","call_id":"call_wrong","name":"exec","input":"pwd"},
-			{"type":"custom_tool_call","id":"ctc_valid","call_id":"call_valid","name":"exec","input":"ls"}
-		]
-	}`)
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop after capture"}}`)),
-	}}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	account := &Account{
-		ID: 124, Name: "acc", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
-		Extra:       map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
-	}
-
-	result, err := svc.Forward(context.Background(), c, account, body)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.NotNil(t, upstream.lastReq)
-	require.False(t, gjson.GetBytes(upstream.lastBody, "input.0.id").Exists())
-	require.Equal(t, "call_wrong", gjson.GetBytes(upstream.lastBody, "input.0.call_id").String())
-	require.Equal(t, "ctc_valid", gjson.GetBytes(upstream.lastBody, "input.1.id").String())
-	require.Equal(t, "call_valid", gjson.GetBytes(upstream.lastBody, "input.1.call_id").String())
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_GroupForceOpenAIFastInjectsMissingTier(t *testing.T) {
@@ -874,11 +834,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Equal(t, "compact me", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
 	require.Equal(t, "local-test-instructions", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
-	require.Empty(t, upstream.lastReq.Header.Get("Version"))
-	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"))
-	require.Equal(t, upstream.lastReq.Header.Get("Session-Id"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata").Exists())
-	require.Empty(t, upstream.lastReq.Header.Get("Session_Id"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
 	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
 	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
@@ -2120,7 +2077,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_OfficialIdentityUnified(t *testin
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, openai.CodexDefaultOriginator, upstream.lastReq.Header.Get("originator"))
-	require.Empty(t, upstream.lastReq.Header.Get("version"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("version"))
 }
 
 // 透传模式下真实 TUI 客户端的身份同样被统一：被优先降载的身份不会带到上游。
@@ -2164,7 +2121,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityUnified(t *testin
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, openai.CodexDefaultOriginator, upstream.lastReq.Header.Get("originator"))
-	require.Empty(t, upstream.lastReq.Header.Get("version"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("version"))
 }
 
 func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAndDefaultCacheKey(t *testing.T) {
@@ -2204,32 +2161,27 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
+	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
-	wantSession := wantThread
-	wantWindow := wantThread + ":0"
 
-	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
-	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
-	require.Equal(t, wantWindow, upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
-	require.Equal(t, wantWindow, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, wantThread+":0", gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
 
 	bodyTurnMetadata := gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := upstream.lastReq.Header.Get("x-codex-turn-metadata")
-	require.Equal(t, wantInstall, gjson.Get(bodyTurnMetadata, "installation_id").String())
 	require.Equal(t, wantSession, gjson.Get(bodyTurnMetadata, "session_id").String())
-	require.Equal(t, wantThread, gjson.Get(bodyTurnMetadata, "thread_id").String())
-	require.Equal(t, wantWindow, gjson.Get(bodyTurnMetadata, "window_id").String())
 	require.Equal(t, wantSession, gjson.Get(headerTurnMetadata, "session_id").String())
 	require.Equal(t, gjson.Get(bodyTurnMetadata, "turn_id").String(), gjson.Get(headerTurnMetadata, "turn_id").String())
-	require.Positive(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int())
 }
 
 func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParityAndDefaultCacheKey(t *testing.T) {
@@ -2271,35 +2223,30 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
+	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
-	wantSession := wantThread
-	wantWindow := wantThread + ":0"
 
-	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
-	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
-	require.Equal(t, wantWindow, upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
 
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
-	require.Equal(t, wantWindow, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, wantThread+":0", gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
 
 	bodyTurnMetadata := gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-turn-metadata").String()
 	headerTurnMetadata := upstream.lastReq.Header.Get("x-codex-turn-metadata")
-	require.Equal(t, wantInstall, gjson.Get(bodyTurnMetadata, "installation_id").String())
 	require.Equal(t, wantSession, gjson.Get(bodyTurnMetadata, "session_id").String())
-	require.Equal(t, wantThread, gjson.Get(bodyTurnMetadata, "thread_id").String())
-	require.Equal(t, wantWindow, gjson.Get(bodyTurnMetadata, "window_id").String())
 	require.Equal(t, wantSession, gjson.Get(headerTurnMetadata, "session_id").String())
 	require.Equal(t, gjson.Get(bodyTurnMetadata, "turn_id").String(), gjson.Get(headerTurnMetadata, "turn_id").String())
-	require.Positive(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int())
 }
 
-func TestOpenAIGatewayService_CodexFingerprintCompactMatchesOfficialIdentityCarriers(t *testing.T) {
+func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyOrMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -2336,15 +2283,11 @@ func TestOpenAIGatewayService_CodexFingerprintCompactMatchesOfficialIdentityCarr
 
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	wantThread := resolveConvergedThreadID(seed, "header-session")
-	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata").Exists())
-	require.Equal(t, wantThread, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
-	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
-	require.Equal(t, resolveConvergedInstallationID(account, seed), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Empty(t, upstream.lastReq.Header.Get("x-client-request-id"))
-	require.Equal(t, "compaction", gjson.Get(upstream.lastReq.Header.Get(openAIWSTurnMetadataHeader), "request_kind").String())
+	require.NotEqual(t, resolveConvergedSessionID(seed), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").Exists())
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-window-id"))
 }
 
 func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPromptCacheKey(t *testing.T) {
@@ -2381,11 +2324,10 @@ func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPro
 
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	wantSession := resolveConvergedThreadID(seed, "header-session")
+	wantSession := resolveConvergedSessionID(seed)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
-	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
-	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
@@ -2741,9 +2683,6 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
 	c.Request.Header.Set("x-stainless-timeout", "120000")
-	c.Request.Header.Set("Accept", "application/json")
-	c.Request.Header.Set("Accept-Language", "zh-CN")
-	c.Request.Header.Set("Traceparent", "00-private")
 	c.Request.Header.Set("X-Test", "keep")
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
@@ -2779,13 +2718,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Empty(t, upstream.lastReq.Header.Get("x-stainless-timeout"))
-	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
-	require.Empty(t, upstream.lastReq.Header.Get("Accept-Language"))
-	require.Empty(t, upstream.lastReq.Header.Get("Traceparent"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_FiltersTimeoutHeadersEvenWhenConfigured(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -2830,6 +2766,6 @@ func TestOpenAIGatewayService_OAuthPassthrough_FiltersTimeoutHeadersEvenWhenConf
 	_, err := svc.Forward(context.Background(), c, account, originalBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Empty(t, upstream.lastReq.Header.Get("x-stainless-timeout"))
+	require.Equal(t, "120000", upstream.lastReq.Header.Get("x-stainless-timeout"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Test"))
 }

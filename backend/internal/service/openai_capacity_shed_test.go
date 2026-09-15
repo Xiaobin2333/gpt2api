@@ -416,8 +416,8 @@ func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {
 	}
 }
 
-// 出站身份的版本声明只有一个来源：UA 版本段、/models 查询参数与兼容探针均从
-// codexCLIVersion 派生，避免各自硬编码后漂移成互相矛盾的身份。
+// 出站身份的版本声明只能有一个来源：UA 的版本段、version 头、探针版本三处必须同源，
+// 各自硬编码会漂移成互相矛盾的身份，而自相矛盾或陈旧的身份会被上游优先降载。
 func TestCodexOutboundVersionHasSingleSource(t *testing.T) {
 	require.True(t,
 		strings.HasPrefix(codexCLIUserAgent, openai.CodexDefaultOriginator+"/"+codexCLIVersion+" "),

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -22,7 +21,6 @@ func newTurnStateTestContext(t *testing.T, apiKeyID int64, sessionID string) (*g
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	if sessionID != "" {
 		c.Request.Header.Set("session_id", sessionID)
-		c.Request.Header.Set("x-codex-turn-metadata", `{"turn_id":"turn-`+sessionID+`"}`)
 	}
 	if apiKeyID > 0 {
 		c.Set("api_key", &APIKey{ID: apiKeyID})
@@ -61,8 +59,6 @@ func TestRelayOpenAICodexTurnState_SetsHeaderAndRecordsProvenance(t *testing.T) 
 	origin, ok := raw.(openAICodexTurnStateOrigin)
 	require.True(t, ok)
 	require.Equal(t, int64(42), origin.accountID)
-	require.Equal(t, "turn-sess-relay", origin.turnID)
-	require.Equal(t, sha256.Sum256([]byte("blob-A")), origin.stateHash)
 	require.True(t, origin.expiresAt.After(time.Now()))
 }
 
@@ -180,47 +176,17 @@ func TestGuardOpenAICodexTurnStateEcho(t *testing.T) {
 		h := newOutbound("blob-A")
 		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 43}, h)
 		require.Empty(t, h.Get("x-codex-turn-state"))
-		_, ok := svc.openaiCodexTurnStateOrigins.Load("7\x00sess-g2")
-		require.False(t, ok, "account failover must invalidate the old provenance")
 	})
 
-	t.Run("new_turn_strips_echo_and_invalidates_provenance", func(t *testing.T) {
-		svc := &OpenAIGatewayService{}
-		c, _ := newTurnStateTestContext(t, 7, "sess-new-turn")
-		upstream := http.Header{}
-		upstream.Set("x-codex-turn-state", "blob-A")
-		svc.relayOpenAICodexTurnState(c, &Account{ID: 42}, upstream)
-
-		c.Request.Header.Set("x-codex-turn-metadata", `{"turn_id":"turn-next"}`)
-		stageOpenAICodexTurnStateIdentity(c, nil)
-		h := newOutbound("blob-A")
-		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 42}, h)
-		require.Empty(t, h.Get("x-codex-turn-state"))
-		_, ok := svc.openaiCodexTurnStateOrigins.Load("7\x00sess-new-turn")
-		require.False(t, ok, "new turn must invalidate the old provenance")
-	})
-
-	t.Run("same_account_different_blob_strips_echo", func(t *testing.T) {
-		svc := &OpenAIGatewayService{}
-		c, _ := newTurnStateTestContext(t, 7, "sess-g2-hash")
-		upstream := http.Header{}
-		upstream.Set("x-codex-turn-state", "blob-A")
-		svc.relayOpenAICodexTurnState(c, &Account{ID: 42}, upstream)
-
-		h := newOutbound("blob-B")
-		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 42}, h)
-		require.Empty(t, h.Get("x-codex-turn-state"))
-	})
-
-	t.Run("no_provenance_strips_echo", func(t *testing.T) {
+	t.Run("no_provenance_passthrough", func(t *testing.T) {
 		svc := &OpenAIGatewayService{}
 		c, _ := newTurnStateTestContext(t, 7, "sess-g3")
 		h := newOutbound("blob-unknown")
 		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 43}, h)
-		require.Empty(t, h.Get("x-codex-turn-state"))
+		require.Equal(t, "blob-unknown", h.Get("x-codex-turn-state"))
 	})
 
-	t.Run("expired_provenance_strips_echo_and_prunes", func(t *testing.T) {
+	t.Run("expired_provenance_passthrough_and_pruned", func(t *testing.T) {
 		svc := &OpenAIGatewayService{}
 		c, _ := newTurnStateTestContext(t, 7, "sess-g4")
 		svc.openaiCodexTurnStateOrigins.Store("7\x00sess-g4", openAICodexTurnStateOrigin{
@@ -229,17 +195,17 @@ func TestGuardOpenAICodexTurnStateEcho(t *testing.T) {
 		})
 		h := newOutbound("blob-A")
 		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 43}, h)
-		require.Empty(t, h.Get("x-codex-turn-state"))
+		require.Equal(t, "blob-A", h.Get("x-codex-turn-state"))
 		_, ok := svc.openaiCodexTurnStateOrigins.Load("7\x00sess-g4")
 		require.False(t, ok)
 	})
 
-	t.Run("no_session_seed_strips_echo", func(t *testing.T) {
+	t.Run("no_session_seed_noop", func(t *testing.T) {
 		svc := &OpenAIGatewayService{}
 		c, _ := newTurnStateTestContext(t, 7, "")
 		h := newOutbound("blob-A")
 		svc.guardOpenAICodexTurnStateEcho(c, &Account{ID: 43}, h)
-		require.Empty(t, h.Get("x-codex-turn-state"))
+		require.Equal(t, "blob-A", h.Get("x-codex-turn-state"))
 	})
 
 	t.Run("no_echo_noop", func(t *testing.T) {
@@ -328,23 +294,27 @@ func TestEnsureOpenAIRemoteCompactionV2BetaFeature(t *testing.T) {
 	})
 }
 
+// 对齐真实 Codex：该头是会话级常量，挂在 OAuth 的每个请求上，而不是只在
+// 压缩回合出现（codex-rs build_model_client_beta_features_header）。
 func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	oauthAccount := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKeyAccount := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 
-	t.Run("oauth_plain_request_gets_canonical_default", func(t *testing.T) {
+	t.Run("oauth_plain_request_gets_default_codex_shape", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"),
+			"OAuth 的普通请求也必须带会话级 beta 头")
 	})
 
-	t.Run("oauth_client_declared_header_rebuilt", func(t *testing.T) {
+	t.Run("client_declared_header_preserved", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
+		require.Equal(t, "some_other_feature", h.Get("x-codex-beta-features"),
+			"客户端显式声明的能力集不得被网关改写（非空即视为用户已关闭 v2）")
 	})
 
 	t.Run("native_v2_forces_feature_even_when_client_trimmed_it", func(t *testing.T) {
@@ -353,7 +323,9 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
+		require.Contains(t, h.Get("x-codex-beta-features"), "remote_compaction_v2",
+			"body 带 compaction_trigger 是实锤，必须确保 v2 在列")
+		require.Contains(t, h.Get("x-codex-beta-features"), "some_other_feature")
 	})
 
 	t.Run("native_v2_applies_to_non_oauth_too", func(t *testing.T) {
@@ -380,7 +352,10 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 	})
 }
 
-func TestBuildOpenAIWSHeaders_ConvergesOAuthBetaFeatures(t *testing.T) {
+// WS 握手与 HTTP 出站必须给出同一份会话级 beta 头：真实 Codex 的
+// build_websocket_headers 复用 build_responses_headers（client.rs），
+// 两侧不一致还会让预热连接与实际请求落进不同的连接池兼容分桶。
+func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
 	decision := OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2}
@@ -408,10 +383,12 @@ func TestBuildOpenAIWSHeaders_ConvergesOAuthBetaFeatures(t *testing.T) {
 	}
 
 	headers := build(t, oauthAccount, "")
-	require.Equal(t, "remote_compaction_v2", headers.Get("x-codex-beta-features"))
+	require.Equal(t, "remote_compaction_v2", headers.Get("x-codex-beta-features"),
+		"WS 握手也必须带会话级 beta 头")
 
 	declared := build(t, oauthAccount, "some_other_feature")
-	require.Equal(t, []string{"remote_compaction_v2"}, declared.Values("x-codex-beta-features"))
+	require.Equal(t, []string{"some_other_feature"}, declared.Values("x-codex-beta-features"),
+		"客户端已声明时原样保留")
 
 	apiKeyHeaders := build(t, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "")
 	require.Empty(t, apiKeyHeaders.Get("x-codex-beta-features"),
