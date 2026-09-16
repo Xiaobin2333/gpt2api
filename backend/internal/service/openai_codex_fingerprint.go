@@ -871,7 +871,7 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 }
 
 // rewriteClientMetadataEmbeddedTurnMetadata rewrites the canonical embedded
-// metadata snapshot and creates it when an official 0.153.4 carrier is absent.
+// metadata snapshot and creates it when an official 0.154.0 carrier is absent.
 func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) bool {
 	raw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	metadata := make(map[string]any, len(fields))

@@ -34,6 +34,108 @@ func TestCoderOpenAIWSClientDialer_ProxyHTTPClientInvalidURL(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestIsCodexOAuthWSSURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "official", url: "wss://chatgpt.com/backend-api/codex/responses", want: true},
+		{name: "case insensitive", url: "WSS://CHATGPT.COM/backend-api/codex/responses", want: true},
+		{name: "wrong scheme", url: "ws://chatgpt.com/backend-api/codex/responses", want: false},
+		{name: "api key upstream", url: "wss://api.openai.com/v1/responses", want: false},
+		{name: "deceptive hostname", url: "wss://chatgpt.com.evil.example/responses", want: false},
+		{name: "missing hostname", url: "wss:///backend-api/codex/responses", want: false},
+		{name: "invalid", url: "://bad", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isCodexOAuthWSSURL(tt.url))
+		})
+	}
+}
+
+func TestCoderOpenAIWSClientDialer_CodexDirectUsesFingerprintTransport(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+
+	client, err := impl.httpClientForTarget("wss://chatgpt.com/backend-api/codex/responses", "")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.DialTLSContext)
+	require.Nil(t, transport.Proxy)
+	require.False(t, transport.ForceAttemptHTTP2)
+
+	reused, err := impl.codexHTTPClient("")
+	require.NoError(t, err)
+	require.Same(t, client, reused)
+}
+
+func TestCoderOpenAIWSClientDialer_CodexProxyIsIsolatedFromStandardProxy(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+	proxy := "http://127.0.0.1:48080"
+
+	codexClient, err := impl.httpClientForTarget("wss://chatgpt.com/backend-api/codex/responses", proxy)
+	require.NoError(t, err)
+	standardClient, err := impl.httpClientForTarget("wss://api.openai.com/v1/responses", proxy)
+	require.NoError(t, err)
+	require.NotSame(t, codexClient, standardClient)
+
+	codexTransport, ok := codexClient.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, codexTransport.DialTLSContext)
+	require.Nil(t, codexTransport.Proxy, "Codex CONNECT dialer owns proxy traversal")
+	require.False(t, codexTransport.ForceAttemptHTTP2)
+
+	standardTransport, ok := standardClient.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.Nil(t, standardTransport.DialTLSContext)
+	require.NotNil(t, standardTransport.Proxy)
+}
+
+func TestCoderOpenAIWSClientDialer_CodexSOCKS5NormalizesAndReuses(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+
+	c1, err := impl.codexHTTPClient("socks5://127.0.0.1:1080")
+	require.NoError(t, err)
+	c2, err := impl.codexHTTPClient("socks5h://127.0.0.1:1080")
+	require.NoError(t, err)
+	require.Same(t, c1, c2)
+
+	transport, ok := c1.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.DialTLSContext)
+	require.Nil(t, transport.Proxy)
+}
+
+func TestCoderOpenAIWSClientDialer_CodexRejectsInvalidProxy(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+
+	_, err := impl.httpClientForTarget("wss://chatgpt.com/backend-api/codex/responses", "ftp://127.0.0.1:21")
+	require.ErrorContains(t, err, "unsupported proxy scheme")
+}
+
+func TestCoderOpenAIWSClientDialer_DirectNonCodexUsesDefaultClient(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+
+	client, err := impl.httpClientForTarget("wss://api.openai.com/v1/responses", "")
+	require.NoError(t, err)
+	require.Nil(t, client)
+}
+
 func TestCoderOpenAIWSClientDialer_TransportMetricsSnapshot(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()
 	impl, ok := dialer.(*coderOpenAIWSClientDialer)

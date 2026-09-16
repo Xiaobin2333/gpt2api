@@ -38,11 +38,11 @@ type Profile struct {
 }
 
 // CodexHTTPProfile returns the OpenSSL 3.x ClientHello captured from Codex CLI
-// 0.149.1 for OAuth token and chatgpt.com HTTP requests. Codex CLI 0.153.4 uses
-// the same reqwest/rustls dependency versions, so the profile remains current.
+// 0.149.1 for OAuth token and chatgpt.com HTTP requests. Codex CLI 0.154.0 uses
+// the same relevant TLS dependency stack, so this wire profile remains current.
 func CodexHTTPProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.149.1-http",
+		Name: "codex-cli-0.154.0-http",
 		CipherSuites: []uint16{
 			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
 			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
@@ -88,12 +88,12 @@ func CodexHTTPProfile() *Profile {
 }
 
 // CodexWebSocketProfile returns the rustls/aws-lc ClientHello emitted by
-// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.153.4
-// uses the same tokio-tungstenite/rustls versions; rustls deliberately
+// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.154.0
+// uses the same relevant tokio-tungstenite/rustls stack; rustls deliberately
 // randomizes extension order for every handshake.
 func CodexWebSocketProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.149.1-websocket",
+		Name: "codex-cli-0.154.0-websocket",
 		CipherSuites: []uint16{
 			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
 			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
