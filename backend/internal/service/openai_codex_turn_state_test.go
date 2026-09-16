@@ -308,13 +308,12 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 			"OAuth 的普通请求也必须带会话级 beta 头")
 	})
 
-	t.Run("client_declared_header_preserved", func(t *testing.T) {
+	t.Run("oauth_client_declared_header_rebuilt", func(t *testing.T) {
 		c, _ := newTurnStateTestContext(t, 7, "sess-beta")
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Equal(t, "some_other_feature", h.Get("x-codex-beta-features"),
-			"客户端显式声明的能力集不得被网关改写（非空即视为用户已关闭 v2）")
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
 	})
 
 	t.Run("native_v2_forces_feature_even_when_client_trimmed_it", func(t *testing.T) {
@@ -323,9 +322,7 @@ func TestApplyOpenAICodexBetaFeatures(t *testing.T) {
 		h := http.Header{}
 		h.Set("x-codex-beta-features", "some_other_feature")
 		applyOpenAICodexBetaFeatures(c, oauthAccount, h)
-		require.Contains(t, h.Get("x-codex-beta-features"), "remote_compaction_v2",
-			"body 带 compaction_trigger 是实锤，必须确保 v2 在列")
-		require.Contains(t, h.Get("x-codex-beta-features"), "some_other_feature")
+		require.Equal(t, "remote_compaction_v2", h.Get("x-codex-beta-features"))
 	})
 
 	t.Run("native_v2_applies_to_non_oauth_too", func(t *testing.T) {
@@ -387,8 +384,8 @@ func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
 		"WS 握手也必须带会话级 beta 头")
 
 	declared := build(t, oauthAccount, "some_other_feature")
-	require.Equal(t, []string{"some_other_feature"}, declared.Values("x-codex-beta-features"),
-		"客户端已声明时原样保留")
+	require.Equal(t, []string{"remote_compaction_v2"}, declared.Values("x-codex-beta-features"),
+		"OAuth 会话必须重建为网关规范能力集")
 
 	apiKeyHeaders := build(t, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "")
 	require.Empty(t, apiKeyHeaders.Get("x-codex-beta-features"),

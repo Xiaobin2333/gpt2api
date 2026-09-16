@@ -3069,17 +3069,28 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("X-Codex-Beta-Features", "downstream_marker")
 
 	svc := &OpenAIGatewayService{}
-	account := &Account{Type: AccountTypeOAuth}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintDevice),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
+	}
 
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token")
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
+	require.Empty(t, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
-	require.NotEmpty(t, req.Header.Get("Session_Id"))
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, resolveConvergedInstallationID(account, testCodexFingerprintSeed), req.Header.Get("X-Codex-Installation-Id"))
+	require.Empty(t, req.Header.Get("Session-Id"))
+	require.Empty(t, req.Header.Get("Session_Id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
 }
 
@@ -3110,21 +3121,29 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintDevice),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
 	}
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", true)
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
+	require.Empty(t, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
-	require.NotEmpty(t, req.Header.Get("Session_Id"))
+	require.Equal(t, "remote_compaction_v2", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, resolveConvergedInstallationID(account, testCodexFingerprintSeed), req.Header.Get("X-Codex-Installation-Id"))
+	require.Empty(t, req.Header.Get("session-id"))
+	require.Empty(t, req.Header.Get("session_id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
 }
 
-func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {
+func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeDoesNotSynthesizeSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3135,13 +3154,15 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "anthropic-metadata-session-1", false)
 	require.NoError(t, err)
-	require.NotEmpty(t, req.Header.Get("Session_Id"))
+	require.Empty(t, req.Header.Get("Session-Id"))
+	require.Empty(t, req.Header.Get("Session_Id"))
 	require.Empty(t, req.Header.Get("Conversation_Id"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
 	require.Empty(t, req.Header.Get("originator"))
@@ -3243,7 +3264,7 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 			require.NoError(t, err)
 			require.Equal(t, openai.CodexDefaultOriginator, req.Header.Get("originator"))
 			require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
-			require.Equal(t, codexCLIVersion, req.Header.Get("version"))
+			require.Empty(t, req.Header.Get("version"))
 		})
 	}
 }

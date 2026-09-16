@@ -51,6 +51,10 @@ func (r codexModelsFailoverAccountRepo) ListSchedulableByGroupID(_ context.Conte
 	return append([]service.Account(nil), r.accounts...), nil
 }
 
+func (r codexModelsFailoverAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, _ int64, platform string) ([]service.Account, error) {
+	return r.ListSchedulableByPlatform(ctx, platform)
+}
+
 func (r codexModelsFailoverAccountRepo) ListByGroup(_ context.Context, _ int64) ([]service.Account, error) {
 	return append([]service.Account(nil), r.accounts...), nil
 }

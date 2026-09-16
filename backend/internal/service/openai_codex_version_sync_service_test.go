@@ -293,7 +293,7 @@ func (r *codexVersionSettingRepoStub) GetValue(_ context.Context, key string) (s
 	return r.values[key], nil
 }
 
-// 版本号优先级：管理员面板覆写 → 自动同步值 → 内置常量。
+// 版本号优先级：管理员面板覆写 → 不低于编译基线的自动同步值 → 内置常量。
 // 管理员覆写必须压过同步值，否则「固定版本」的诉求会被 3 小时后的同步冲掉。
 func TestGetOpenAICodexClientVersionPriority(t *testing.T) {
 	tests := []struct {
@@ -303,9 +303,10 @@ func TestGetOpenAICodexClientVersionPriority(t *testing.T) {
 		want     string
 	}{
 		{name: "面板覆写优先", override: "0.150.0", synced: "0.146.0", want: "0.150.0"},
-		{name: "覆写为空时用同步值", synced: "0.146.0", want: "0.146.0"},
+		{name: "过旧同步值回退内置常量", synced: "0.146.0", want: codexCLIVersion},
+		{name: "较新同步值优先", synced: "0.200.1", want: "0.200.1"},
 		{name: "两者皆空时用内置常量", want: codexCLIVersion},
-		{name: "非法覆写回退同步值", override: "latest", synced: "0.146.0", want: "0.146.0"},
+		{name: "非法覆写与过旧同步值回退内置常量", override: "latest", synced: "0.146.0", want: codexCLIVersion},
 		{name: "非法同步值回退内置常量", synced: "not-a-version", want: codexCLIVersion},
 	}
 
@@ -327,6 +328,15 @@ func TestGetOpenAICodexClientVersionFallsBackOnError(t *testing.T) {
 	require.Equal(t, codexCLIVersion, svc.GetOpenAICodexClientVersion(context.Background()))
 }
 
+func TestGetOpenAICodexClientVersionUsesCompiledBaselineWhenAutoSyncDisabled(t *testing.T) {
+	svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexVersionAutoSyncEnabled: "false",
+		SettingKeyOpenAICodexClientVersionSynced:    "0.146.0",
+	}}, nil)
+
+	require.Equal(t, codexCLIVersion, svc.GetOpenAICodexClientVersion(context.Background()))
+}
+
 // 规范 UA：面板未填完整 UA 时按当前生效版本号拼出标准 TUI 形态。
 func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 	svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
@@ -334,7 +344,7 @@ func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 	}}, nil)
 
 	require.Equal(t,
-		"codex-tui/0.200.1"+codexCLIUserAgentSuffix,
+		"codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)",
 		svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 	)
 }

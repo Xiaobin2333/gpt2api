@@ -250,16 +250,11 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
+		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
 	}
 	canonical := resolveCodexOutboundIdentity("")
-	if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-		req.Header.Set("Version", version)
-	} else {
-		req.Header.Set("Version", canonical.version)
-	}
 	if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
 		req.Header.Set("Originator", originator)
 	} else {
@@ -275,15 +270,15 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		req.Header.Set("User-Agent", canonical.userAgent)
 	}
-	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
-		isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionID)
-		req.Header.Set("Session_ID", isolated)
-		req.Header.Set("Conversation_ID", isolated)
+		req.Header.Set("session-id", canonicalCodexRequestUUID(c, sessionID))
 	}
-	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), apiKeyID)
 	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
 	account.ApplyHeaderOverrides(req.Header)
+	stripOpenAILegacyResponsesBeta(req.Header)
+	applyOpenAICodexBetaFeatures(c, account, req.Header)
+	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
+	sanitizeCodexOAuthOutboundHeaders(req.Header)
 	return req, nil
 }
 
@@ -398,14 +393,10 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 
 		if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
+			sanitizeCodexOAuthTurnMetadataHeader(req.Header)
 		}
 		applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 		canonical := resolveCodexOutboundIdentity("")
-		if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-			req.Header.Set("Version", version)
-		} else {
-			req.Header.Set("Version", canonical.version)
-		}
 		if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
 			req.Header.Set("Originator", originator)
 		} else {
@@ -426,6 +417,10 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 
 	account.ApplyHeaderOverrides(req.Header)
 	stripOpenAIAlphaSearchResponsesHeaders(req.Header)
+	if account.Type == AccountTypeOAuth {
+		sanitizeCodexOAuthTurnMetadataHeader(req.Header)
+		sanitizeCodexOAuthOutboundHeaders(req.Header)
+	}
 	return req, nil
 }
 

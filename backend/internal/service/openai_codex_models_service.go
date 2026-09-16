@@ -1642,6 +1642,10 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	appendModelsPath := false
 	switch {
 	case credAccount.IsOpenAIOAuth():
+		// The shared OAuth credential must expose one coherent Codex release. A
+		// downstream client's older client_version must not override the canonical
+		// User-Agent or make the model catalog hide newly supported models.
+		clientVersion = CodexCanonicalClientVersion()
 		authToken = strings.TrimSpace(credAccount.GetOpenAIAccessToken())
 		if authToken == "" && !credAccount.IsOpenAIAgentIdentity() {
 			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
@@ -1695,15 +1699,18 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	headers.Set("Originator", identity.originator)
 	headers.Set("User-Agent", identity.userAgent)
-	// Version 头优先与 client_version 查询参数同源：客户端自报版本合法且不低于上游
-	// 门槛时原样使用；否则回退规范版本，避免陈旧 version 触发上游 404（issue #3901）。
-	// client_version 查询参数本身始终按客户端原值透传（内容协商语义，契约见
-	// TestFetchCodexModelsManifestPassthrough）。
-	headerVersion := NormalizeCodexClientVersion(clientVersion)
-	if headerVersion == "" || CompareVersions(headerVersion, codexUpstreamMinVersion) < 0 {
-		headerVersion = identity.version
+	if useAPIKeyUpstream {
+		// Custom API-key model providers retain the historical compatibility
+		// header. Official OAuth /models uses only client_version plus the normal
+		// Codex originator/User-Agent pair.
+		headerVersion := NormalizeCodexClientVersion(clientVersion)
+		if headerVersion == "" || CompareVersions(headerVersion, codexUpstreamMinVersion) < 0 {
+			headerVersion = identity.version
+		}
+		headers.Set("Version", headerVersion)
+	} else {
+		headers.Del("Version")
 	}
-	headers.Set("Version", headerVersion)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

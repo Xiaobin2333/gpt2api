@@ -378,9 +378,11 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 		version := NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersion])
 		if version == "" {
 			version = NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersionSynced])
-		}
-		if version == "" {
-			version = fallback
+			// A stale persisted auto-sync value must never downgrade a newer build.
+			// This keeps the compiled release usable when auto-sync is disabled.
+			if version == "" || CompareVersions(version, fallback) < 0 {
+				version = fallback
+			}
 		}
 		s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
 			version:   version,

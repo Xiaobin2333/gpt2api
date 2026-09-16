@@ -404,10 +404,10 @@ func applyLiveUpstreamIdentityHeaders(headers http.Header) {
 	ensureCodexIdentityHeaders(headers)
 	enforceCodexIdentityHeaders(headers)
 	if strings.TrimSpace(headers.Get("session-id")) == "" {
-		headers.Set("session-id", uuid.NewString())
+		headers.Set("session-id", uuid.Must(uuid.NewV7()).String())
 	}
 	if strings.TrimSpace(headers.Get("thread-id")) == "" {
-		headers.Set("thread-id", uuid.NewString())
+		headers.Set("thread-id", uuid.Must(uuid.NewV7()).String())
 	}
 	// Realtime/Live 不使用 Responses 的实验头。
 	headers.Del("OpenAI-Beta")

@@ -791,6 +791,31 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
 	}
 	firstClientMessage = updatedFirst
+	if account.IsOpenAIOAuthLike() {
+		if sanitized, changed := sanitizeCodexOAuthJSONBody(firstClientMessage); changed {
+			firstClientMessage = sanitized
+		}
+		fpIDs := resolveCodexFingerprintIDsForWSTurn(c, account, 1)
+		if converged, changed, convergeErr := applyCodexFingerprintClientMetadataRaw(firstClientMessage, fpIDs); convergeErr != nil {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", convergeErr)
+		} else if changed {
+			firstClientMessage = converged
+		}
+		normalized, metadataErr := normalizeCodexOAuthRequestMetadataWithIDs(
+			c,
+			account,
+			firstClientMessage,
+			gjson.GetBytes(firstClientMessage, "prompt_cache_key").String(),
+			fpIDs,
+		)
+		if metadataErr != nil {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+		}
+		firstClientMessage = normalized
+		if sanitized, changed := sanitizeCodexOAuthJSONBodyForSchema(firstClientMessage, codexOAuthRequestSchemaWebSocketResponseCreate); changed {
+			firstClientMessage = sanitized
+		}
+	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter 命中时 service_tier 已经从 firstClientMessage 中删除，
@@ -1096,6 +1121,33 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				payload = s.ReplaceModelInBody(payload, model)
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
+			if policyErr == nil && blocked == nil && account.IsOpenAIOAuthLike() {
+				if sanitized, changed := sanitizeCodexOAuthJSONBody(out); changed {
+					out = sanitized
+				}
+				if isResponseCreate {
+					fpIDs := resolveCodexFingerprintIDsForWSTurn(c, account, turnNo)
+					if converged, changed, convergeErr := applyCodexFingerprintClientMetadataRaw(out, fpIDs); convergeErr != nil {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", convergeErr)
+					} else if changed {
+						out = converged
+					}
+					normalized, metadataErr := normalizeCodexOAuthRequestMetadataWithIDs(
+						c,
+						account,
+						out,
+						gjson.GetBytes(out, "prompt_cache_key").String(),
+						fpIDs,
+					)
+					if metadataErr != nil {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+					}
+					out = normalized
+					if sanitized, changed := sanitizeCodexOAuthJSONBodyForSchema(out, codexOAuthRequestSchemaWebSocketResponseCreate); changed {
+						out = sanitized
+					}
+				}
+			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
 			// filter 处理后的 payload，与首帧 policy-after-extract 语义

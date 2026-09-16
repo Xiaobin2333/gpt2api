@@ -104,20 +104,6 @@ func ensureOpenAIRemoteCompactionV2BetaFeature(h http.Header) {
 	h.Set("x-codex-beta-features", strings.Join(tokens, ","))
 }
 
-// hasOpenAICodexBetaFeaturesHeader 报告出站头里是否已存在非空的
-// x-codex-beta-features（即客户端自己声明过能力集）。
-func hasOpenAICodexBetaFeaturesHeader(h http.Header) bool {
-	if h == nil {
-		return false
-	}
-	for _, value := range h.Values("x-codex-beta-features") {
-		if strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // applyOpenAICodexBetaFeatures 按真实 Codex 的会话级行为补注
 // x-codex-beta-features。
 //
@@ -128,34 +114,24 @@ func hasOpenAICodexBetaFeaturesHeader(h http.Header) bool {
 // 被特判 advertise；实测默认安装下没有任何 Experimental 特性默认开启，
 // 因此默认 Codex 的头值恰好就是单个 "remote_compaction_v2"。
 //
-// 网关据此对齐：
-//   - 原生 v2 压缩回合（body 带 compaction_trigger 实锤）：无论账号类型都确保
-//     v2 在列，覆盖中间网关裁剪 token 的情形（#5586）；
-//   - ChatGPT codex 上游（OAuth）的其余请求：客户端**未**声明该头时补成默认
-//     Codex 形态，消除"仅压缩回合才带该头"这种真实 Codex 不会产生的模式；
-//   - 客户端已声明该头：原样保留。非空但不含 v2 表示用户显式关闭了该特性，
-//     网关不得替其改写能力声明；
-//   - 非 OAuth 上游（API Key/第三方兼容网关）：不做会话级注入，只保留压缩回合
-//     的那一条，避免向非 Codex 后端撒 Codex 专属头。
-//
-// 已知无解的歧义：用户关掉 v2 且无其他特性时，真实 Codex 同样不发该头，与"老
-// 客户端"在线型上不可区分，此时按默认形态补注。该用户的 legacy 压缩端点本就
-// 已被上游下线（404），不存在可回退的正确行为。
+// OAuth 网关会话必须使用网关自己的稳定能力集，不能把下游客户端的会话级
+// feature token 混入共享账号。API Key 上游只在原生 v2 压缩回合补齐该能力。
 func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Header) {
 	if h == nil {
 		return
 	}
+	if account != nil && account.IsOpenAIOAuthLike() {
+		for key := range h {
+			if strings.EqualFold(strings.TrimSpace(key), "x-codex-beta-features") {
+				delete(h, key)
+			}
+		}
+		h.Set("x-codex-beta-features", openAIRemoteCompactionV2Feature)
+		return
+	}
 	if isOpenAINativeCompactionV2(c) {
 		ensureOpenAIRemoteCompactionV2BetaFeature(h)
-		return
 	}
-	if account == nil || !account.IsOpenAIOAuthLike() {
-		return
-	}
-	if hasOpenAICodexBetaFeaturesHeader(h) {
-		return
-	}
-	h.Set("x-codex-beta-features", openAIRemoteCompactionV2Feature)
 }
 
 // HasCompactionTriggerInInput detects an input item with

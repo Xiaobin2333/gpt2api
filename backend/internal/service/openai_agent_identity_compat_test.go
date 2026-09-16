@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -132,10 +133,11 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.NoError(t, err)
 	require.Equal(t, "AgentAssertion", strings.SplitN(req.Header.Get("Authorization"), " ", 2)[0])
 	require.Equal(t, "account-agent-passthrough", req.Header.Get("chatgpt-account-id"))
-	require.NotEqual(t, "client-session", req.Header.Get("session_id"))
-	require.NotEqual(t, "client-conversation", req.Header.Get("conversation_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-session"), req.Header.Get("session_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-conversation"), req.Header.Get("conversation_id"))
+	require.Empty(t, req.Header.Get("session_id"))
+	require.Empty(t, req.Header.Get("conversation_id"))
+	require.Equal(t, "cache-agent", req.Header.Get("session-id"))
+	require.Empty(t, req.Header.Get("thread-id"))
+	require.Empty(t, req.Header.Get("x-client-request-id"))
 	requestBody, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
@@ -483,8 +485,14 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	secondKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
 	require.NotEmpty(t, firstKey)
 	require.Equal(t, firstKey, secondKey)
-	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(99, codexAccountIdentitySource(c, account), firstKey)), upstream.requests[0].Header.Get("session_id"))
-	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
+	firstSessionID := upstream.requests[0].Header.Get("session-id")
+	require.NotEmpty(t, firstSessionID)
+	parsedSessionID, parseErr := uuid.Parse(firstSessionID)
+	require.NoError(t, parseErr)
+	require.Equal(t, uuid.Version(7), parsedSessionID.Version())
+	require.Equal(t, firstSessionID, upstream.requests[1].Header.Get("session-id"))
+	require.Empty(t, upstream.requests[0].Header.Get("session_id"))
+	require.Empty(t, upstream.requests[1].Header.Get("session_id"))
 }
 
 func decodeAgentAssertionTask(t *testing.T, header string) string {

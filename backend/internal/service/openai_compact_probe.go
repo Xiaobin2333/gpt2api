@@ -153,14 +153,24 @@ func mergeExtraUpdates(base map[string]any, more map[string]any) map[string]any 
 	return out
 }
 
-// compactProbeSessionID 返回探测请求使用的会话标识。真实 Codex 的
-// session-id / thread-id 恒为 UUID（codex-protocol ThreadId 是 UUIDv7），
-// 探测既然与真实流量走同一个 /responses 端点，标识形态就必须同构——
-// 否则上游能凭 "probe_compact_5" 这类字面量一眼区分出探测流量。
-// 账号级稳定派生：重复探测复用同一会话，而不是每次新开一个。
+// compactProbeSessionID 返回部署域内账号级稳定的 UUIDv7 会话标识。
+// 数据库副本进入另一个部署域后会得到不同值，避免辅助探测跨部署关联。
 func compactProbeSessionID(accountID int64) string {
-	if accountID <= 0 {
-		return deriveStableUUIDv4("sub2api:codex-compact-probe:v1:anonymous")
+	accountKey := "anonymous"
+	if accountID > 0 {
+		accountKey = strconv.FormatInt(accountID, 10)
 	}
-	return deriveStableUUIDv4("sub2api:codex-compact-probe:v1:" + strconv.FormatInt(accountID, 10))
+	return deriveStableUUIDv7(scopedCodexFingerprintSeed("codex-compact-probe-session-v2", accountKey))
+}
+
+// applyCodexAccountProbeSessionHeaders gives every synthetic OAuth account
+// probe a stable CLI-shaped session, then applies the account's normal
+// convergence policy to that real carrier. It deliberately does not fabricate
+// installation, thread, turn, or window headers.
+func applyCodexAccountProbeSessionHeaders(h http.Header, credentialAccount *Account, probeAccountID int64) {
+	if h == nil || credentialAccount == nil {
+		return
+	}
+	h.Set("session-id", compactProbeSessionID(probeAccountID))
+	applyCodexFingerprintHeaders(h, resolveCodexFingerprintIDsFromRequest(credentialAccount, h))
 }

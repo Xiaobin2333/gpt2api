@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -312,6 +313,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	if account.UsesOpenAICodexProtocol() {
+		responsesBody, err = prepareCodexOAuthFingerprintPayload(c, account, responsesBody, promptCacheKey, true)
+		if err != nil {
+			return nil, fmt.Errorf("prepare Codex fingerprint payload: %w", err)
+		}
+		responsesBody, err = sjson.DeleteBytes(responsesBody, "prompt_cache_key")
+		if err != nil {
+			return nil, fmt.Errorf("remove internal Codex bridge cache key: %w", err)
+		}
+	}
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
@@ -358,7 +369,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
-	if account.Platform != PlatformGrok && promptCacheKey != "" {
+	if account.Platform != PlatformGrok && promptCacheKey != "" && !account.UsesOpenAICodexProtocol() {
 		isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
 		if upstreamReq.Header.Get("conversation_id") != "" {
@@ -371,6 +382,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		// originator/OpenAI-Beta 返回 404（issue #3901）。
 		ensureCodexIdentityHeaders(upstreamReq.Header)
 		enforceCodexIdentityHeaders(upstreamReq.Header)
+		stripOpenAILegacyResponsesBeta(upstreamReq.Header)
 		logger.L().Debug("openai messages: upstream identity restored",
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_model", upstreamModel),

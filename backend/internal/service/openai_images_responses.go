@@ -1833,6 +1833,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	responsesBody, err = prepareCodexOAuthFingerprintPayload(c, account, responsesBody, parsed.StickySessionSeed(), !direct)
+	if err != nil {
+		return nil, fmt.Errorf("prepare Codex image fingerprint payload: %w", err)
+	}
 	upstreamCtx = withOpenAIImagesSelfBuiltRequest(upstreamCtx)
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
 	if err != nil {
@@ -1850,8 +1854,6 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if !parsed.Stream {
 			upstreamReq.Header.Set("Accept", "application/json")
 		}
-	} else {
-		upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
 	}
 
 	proxyURL := ""

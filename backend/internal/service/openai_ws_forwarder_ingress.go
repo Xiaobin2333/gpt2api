@@ -92,6 +92,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}
+	var clientHeaders http.Header
+	if c.Request != nil {
+		clientHeaders = c.Request.Header
+	}
+	stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsForPayload(
+		c,
+		account,
+		clientHeaders,
+		firstClientMessage,
+		gjson.GetBytes(firstClientMessage, "prompt_cache_key").String(),
+	))
 
 	// 预取一次 OpenAI Fast Policy settings，绑定到 ctx，让该 WS session
 	// 内所有帧的 evaluateOpenAIFastPolicy 调用复用同一份快照，避免每帧
@@ -466,6 +477,26 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		}
 		normalized = policyApplied
+		if account.IsOpenAIOAuthLike() {
+			if sanitized, changed := sanitizeCodexOAuthJSONBody(normalized); changed {
+				normalized = sanitized
+			}
+			fpIDs := resolveCodexFingerprintIDsForWSTurn(c, account, turn)
+			if converged, changed, convergeErr := applyCodexFingerprintClientMetadataRaw(normalized, fpIDs); convergeErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", convergeErr)
+			} else if changed {
+				normalized = converged
+			}
+			metadataNormalized, metadataErr := normalizeCodexOAuthRequestMetadataWithIDs(c, account, normalized, promptCacheKey, fpIDs)
+			if metadataErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request metadata", metadataErr)
+			}
+			normalized = metadataNormalized
+			if sanitized, changed := sanitizeCodexOAuthJSONBodyForSchema(normalized, codexOAuthRequestSchemaWebSocketResponseCreate); changed {
+				normalized = sanitized
+			}
+		}
+		promptCacheKey = strings.TrimSpace(gjson.GetBytes(normalized, "prompt_cache_key").String())
 		ingressSessionOriginalModel = originalModel
 
 		return openAIWSClientPayload{

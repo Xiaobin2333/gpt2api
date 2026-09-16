@@ -357,6 +357,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	if account.UsesOpenAICodexProtocol() {
+		responsesBody, err = prepareCodexOAuthFingerprintPayload(c, account, responsesBody, promptCacheKey, true)
+		if err != nil {
+			return nil, fmt.Errorf("prepare Codex fingerprint payload: %w", err)
+		}
+	}
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 
 	// 5. Get access token
@@ -378,7 +384,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	if promptCacheKey != "" {
+	if promptCacheKey != "" && !account.UsesOpenAICodexProtocol() {
 		apiKeyID := getAPIKeyIDFromContext(c)
 		sessionKey := promptCacheKey
 		if !compatPromptCacheTenantIsolated {

@@ -389,7 +389,7 @@ func TestOpenAIGatewayService_PreviousResponseHonorsGroupAndRequiredPrivacy(t *t
 	}
 }
 
-func TestOpenAIGatewayService_PreviousResponseSimpleModeIgnoresGroupMembership(t *testing.T) {
+func TestOpenAIGatewayService_PreviousResponseSimpleModeRespectsGroupMembership(t *testing.T) {
 	groupID := int64(3905)
 	bound := Account{
 		ID: 39051, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
@@ -429,11 +429,7 @@ func TestOpenAIGatewayService_PreviousResponseSimpleModeIgnoresGroupMembership(t
 		context.Background(), &groupID, responseID, codexAutoReviewModel, nil, false,
 	)
 	require.NoError(t, err)
-	require.NotNil(t, directSelection)
-	require.Equal(t, bound.ID, directSelection.Account.ID)
-	if directSelection.ReleaseFunc != nil {
-		directSelection.ReleaseFunc()
-	}
+	require.Nil(t, directSelection)
 
 	selection, decision, err := svc.SelectAccountWithSchedulerForCapability(
 		context.Background(), &groupID, responseID, "", codexAutoReviewModel,
@@ -442,8 +438,8 @@ func TestOpenAIGatewayService_PreviousResponseSimpleModeIgnoresGroupMembership(t
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
-	require.Equal(t, bound.ID, selection.Account.ID)
-	require.Equal(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
+	require.Equal(t, fallback.ID, selection.Account.ID)
+	require.NotEqual(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}

@@ -1,18 +1,28 @@
 package service
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
-// codexUpstreamMinVersion 上游 /backend-api/codex 接受的最低 version 头：
-// 若请求携带 version 且低于该值，上游直接 404（issue #3901，2026-07 实测）。
+// codexUpstreamMinVersion 是上游接受的最低 Codex 客户端版本，用于约束 UA 版本段
+// 以及自定义 API Key 上游的历史兼容 Version 头（issue #3901，2026-07 实测）。
 const codexUpstreamMinVersion = "0.144.0"
 
 // codexClientVersionMaxLen 官方版本号均为短 ASCII 串，远低于此上限。
@@ -21,8 +31,12 @@ const codexClientVersionMaxLen = 64
 // codexClientVersionPattern 允许 0.146.0 与 0.147.0-alpha.4 两类官方形态。
 var codexClientVersionPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+){1,3}(-[0-9A-Za-z.]+)?$`)
 
+// codexCLIUserAgentEnvironmentPattern matches the environment segment emitted
+// by codex-rs: `(<OS> <version>; <arch>) <terminal-token>`.
+var codexCLIUserAgentEnvironmentPattern = regexp.MustCompile(`^\([^()\r\n;]+;\s*[^()\s;]+\)\s+\S+$`)
+
 // NormalizeCodexClientVersion 校验并归一化 Codex 客户端版本号，非法值返回空串。
-// 该值会被拼进出站 User-Agent 与 version 头，必须拒绝任意字节，避免管理员误填或
+// 该值会被拼进出站 User-Agent，并用于 /models 的 client_version 查询参数，必须拒绝任意字节，避免管理员误填或
 // 自动同步拿到异常值时把不可控内容透给上游。
 func NormalizeCodexClientVersion(version string) string {
 	version = strings.TrimSpace(version)
@@ -38,7 +52,8 @@ func buildCodexCLIUserAgent(version string) string {
 	if version = NormalizeCodexClientVersion(version); version == "" {
 		return codexCLIUserAgent
 	}
-	return openai.CodexDefaultOriginator + "/" + version + codexCLIUserAgentSuffix
+	return openai.CodexDefaultOriginator + "/" + version + codexCLIUserAgentSuffix +
+		" (" + codexCLIClientName + "; " + version + ")"
 }
 
 // codexIdentityEnforcement 控制 enforceCodexIdentityHeaders 是否强制统一出站身份，
@@ -86,8 +101,7 @@ func CodexCanonicalUserAgent() string {
 // CodexCanonicalAuthIdentity 返回凭据面（auth.openai.com：换 Token / 刷新 / whoami）
 // 出站请求的身份对：规范 User-Agent 与配套 originator，与推理解析链同源。
 // 凭据面不发 version 头——真实 Codex 客户端在该面只携带 originator 与 User-Agent
-// （codex-rs login/default_client.rs 的 default_headers()），version 门槛
-// （issue #3901）只存在于 /backend-api/codex 推理面。
+// （codex-rs login/default_client.rs 的 default_headers()）。
 func CodexCanonicalAuthIdentity() (userAgent, originator string) {
 	identity := resolveCodexOutboundIdentity("")
 	return identity.userAgent, identity.originator
@@ -103,6 +117,378 @@ func ApplyCodexCanonicalAuthIdentity(h http.Header) {
 	h.Set("originator", originator)
 }
 
+type codexOAuthRequestIdentity struct {
+	installationID  string
+	sessionID       string
+	threadID        string
+	turnID          string
+	windowID        string
+	windowNumber    uint64
+	hasWindowNumber bool
+	contextWindowID string
+	turnStartedAt   int64
+}
+
+func resolveCodexOAuthRequestIdentity(c *gin.Context, account *Account, h http.Header, body []byte, promptCacheKey string) codexOAuthRequestIdentity {
+	identity := codexOAuthRequestIdentity{}
+	var inbound http.Header
+	if c != nil && c.Request != nil {
+		inbound = c.Request.Header
+	}
+	if ids := stagedCodexFingerprintIDs(c, account); ids != nil {
+		identity.installationID = ids.installationID
+		identity.sessionID = ids.sessionID
+		identity.threadID = ids.threadID
+		identity.turnID = ids.turnID
+		identity.windowID = ids.windowID
+		if ids.mode == codexFingerprintSession || ids.mode == codexFingerprintFull {
+			identity.windowNumber = ids.windowNumber
+			identity.hasWindowNumber = true
+			identity.contextWindowID = ids.contextWindowID
+		}
+		identity.turnStartedAt = ids.turnStartedAtUnixMs
+	}
+	embeddedTurnMetadata := gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String()
+	if identity.installationID == "" {
+		identity.installationID = strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
+	}
+	if identity.installationID == "" && account != nil {
+		identitySource := codexAccountIdentitySource(c, account)
+		if seed, ok := codexFingerprintSeedForConvergence(identitySource); ok {
+			identity.installationID = resolveConvergedInstallationID(identitySource, seed)
+		}
+	}
+	if identity.sessionID == "" {
+		identity.sessionID = firstNonEmptyCodexIdentityValue(
+			promptCacheKey,
+			gjson.GetBytes(body, "client_metadata.session_id").String(),
+			gjson.Get(embeddedTurnMetadata, "session_id").String(),
+			h.Get("session-id"),
+			inbound.Get("session-id"),
+			h.Get("session_id"),
+			inbound.Get("session_id"),
+		)
+	}
+	if identity.threadID == "" {
+		identity.threadID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.thread_id").String(),
+			gjson.Get(embeddedTurnMetadata, "thread_id").String(),
+			h.Get("thread-id"),
+			inbound.Get("thread-id"),
+		)
+	}
+	if identity.turnID == "" {
+		identity.turnID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.turn_id").String(),
+			gjson.Get(embeddedTurnMetadata, "turn_id").String(),
+		)
+	}
+	if identity.windowID == "" {
+		identity.windowID = firstNonEmptyCodexIdentityValue(
+			gjson.GetBytes(body, "client_metadata.x-codex-window-id").String(),
+			gjson.Get(embeddedTurnMetadata, "window_id").String(),
+			h.Get("x-codex-window-id"),
+			inbound.Get("x-codex-window-id"),
+		)
+	}
+	if !identity.hasWindowNumber {
+		windowNumber := gjson.Get(embeddedTurnMetadata, "window_number")
+		if windowNumber.Exists() && windowNumber.Type == gjson.Number {
+			if parsed, err := strconv.ParseUint(windowNumber.Raw, 10, 64); err == nil {
+				identity.windowNumber = parsed
+				identity.hasWindowNumber = true
+			}
+		}
+	}
+	if identity.contextWindowID == "" {
+		identity.contextWindowID = strings.TrimSpace(gjson.Get(embeddedTurnMetadata, "context_window_id").String())
+	}
+	if identity.turnStartedAt == 0 {
+		identity.turnStartedAt = gjson.Get(embeddedTurnMetadata, "turn_started_at_unix_ms").Int()
+	}
+	return identity
+}
+
+func firstNonEmptyCodexIdentityValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func canonicalCodexRequestUUID(c *gin.Context, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := uuid.Parse(value); err == nil && parsed != uuid.Nil && parsed.Version() == uuid.Version(7) {
+		return parsed.String()
+	}
+	isolated := isolateOpenAISessionID(getAPIKeyIDFromContext(c), value)
+	return deriveStableUUIDv7("sub2api:codex-request-id:v3:"+isolated, value)
+}
+
+func canonicalCodexRequestWindowID(value, threadID string) string {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return ""
+	}
+	windowNumber := uint64(0)
+	if separator := strings.LastIndexByte(strings.TrimSpace(value), ':'); separator >= 0 {
+		if parsed, err := strconv.ParseUint(strings.TrimSpace(value)[separator+1:], 10, 64); err == nil {
+			windowNumber = parsed
+		}
+	}
+	return threadID + ":" + strconv.FormatUint(windowNumber, 10)
+}
+
+func applyCodexOAuthRequestIdentityHeaders(h http.Header, identity codexOAuthRequestIdentity, compact bool) {
+	if h == nil {
+		return
+	}
+	h.Del("session_id")
+	h.Del("conversation_id")
+	if identity.sessionID != "" {
+		h.Set("session-id", identity.sessionID)
+	}
+	if identity.threadID != "" {
+		h.Set("thread-id", identity.threadID)
+	}
+	if identity.windowID != "" {
+		h.Set("x-codex-window-id", identity.windowID)
+	}
+	if compact {
+		if identity.installationID != "" {
+			h.Set("x-codex-installation-id", identity.installationID)
+		} else {
+			h.Del("x-codex-installation-id")
+		}
+		h.Del("x-client-request-id")
+		applyCodexOAuthIdentityTurnMetadataHeader(h, identity, true)
+		return
+	}
+	// Normal HTTP and WebSocket requests carry installation identity in
+	// client_metadata. The legacy unary compact endpoint is the only current
+	// Codex request that carries it as a direct header.
+	h.Del("x-codex-installation-id")
+	if identity.threadID != "" {
+		h.Set("x-client-request-id", identity.threadID)
+	}
+	applyCodexOAuthIdentityTurnMetadataHeader(h, identity, false)
+}
+
+func applyCodexOAuthIdentityTurnMetadataHeader(h http.Header, identity codexOAuthRequestIdentity, compact bool) {
+	if h == nil || identity.sessionID == "" || identity.threadID == "" || identity.turnID == "" {
+		return
+	}
+	metadata := make(map[string]any, 12)
+	if raw := strings.TrimSpace(h.Get(openAIWSTurnMetadataHeader)); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &metadata)
+		if metadata == nil {
+			metadata = make(map[string]any, 12)
+		}
+	}
+	metadata["installation_id"] = identity.installationID
+	metadata["session_id"] = identity.sessionID
+	metadata["thread_id"] = identity.threadID
+	metadata["agent_name"] = "/root"
+	metadata["turn_id"] = identity.turnID
+	metadata["window_id"] = identity.windowID
+	if identity.hasWindowNumber {
+		metadata["window_number"] = identity.windowNumber
+	}
+	if identity.contextWindowID != "" {
+		metadata["context_window_id"] = identity.contextWindowID
+	}
+	if identity.turnStartedAt > 0 {
+		metadata["turn_started_at_unix_ms"] = identity.turnStartedAt
+	}
+	if compact {
+		metadata["request_kind"] = "compaction"
+		if _, ok := metadata["compaction"]; !ok {
+			metadata["compaction"] = map[string]any{
+				"trigger":        "manual",
+				"reason":         "manual",
+				"implementation": "responses_compact",
+				"phase":          "standalone_turn",
+				"strategy":       "memento",
+			}
+		}
+	} else {
+		metadata["request_kind"] = "turn"
+	}
+	if encoded, err := marshalCodexTurnMetadata(metadata); err == nil {
+		h.Set(openAIWSTurnMetadataHeader, encoded)
+	}
+}
+
+func normalizeCodexOAuthRequestMetadata(c *gin.Context, account *Account, body []byte, promptCacheKey string) ([]byte, error) {
+	return normalizeCodexOAuthRequestMetadataWithIDs(c, account, body, promptCacheKey, nil)
+}
+
+func normalizeCodexOAuthRequestMetadataWithIDs(c *gin.Context, account *Account, body []byte, promptCacheKey string, ids *codexFingerprintIDs) ([]byte, error) {
+	if account == nil || !account.IsOpenAIOAuth() || len(body) == 0 || !gjson.ValidBytes(body) {
+		return body, nil
+	}
+	if ids == nil {
+		ids = stagedCodexFingerprintIDs(c, account)
+	}
+	if ids == nil {
+		var headers http.Header
+		if c != nil && c.Request != nil {
+			headers = c.Request.Header
+		}
+		ids = resolveCodexFingerprintIDsFromRequest(codexAccountIdentitySource(c, account), headers)
+	}
+	next, _, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	if err != nil {
+		return body, err
+	}
+	if ids != nil && !gjson.GetBytes(next, "client_metadata.x-codex-ws-stream-request-start-ms").Exists() {
+		next, err = sjson.SetBytes(next, "client_metadata.x-codex-ws-stream-request-start-ms", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		if err != nil {
+			return body, fmt.Errorf("synthesize websocket request start metadata: %w", err)
+		}
+	}
+	return next, nil
+}
+
+func applyCodexOAuthTurnMetadataCompatibilityHeader(h http.Header, body []byte) {
+	if h == nil {
+		return
+	}
+	value := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String())
+	if value == "" {
+		return
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(value), &metadata); err != nil {
+		return
+	}
+	// The CLI keeps the unbounded tool inventory in client_metadata only. Its
+	// compatibility header is the same metadata snapshot without this field.
+	delete(metadata, "tool_namespaces_info")
+	encoded, err := marshalCodexTurnMetadata(metadata)
+	if err == nil {
+		h.Set(openAIWSTurnMetadataHeader, encoded)
+	}
+}
+
+var codexTurnMetadataFieldOrder = [...]string{
+	"installation_id",
+	"session_id",
+	"thread_id",
+	"agent_name",
+	"turn_id",
+	"window_id",
+	"window_number",
+	"context_window_id",
+	"request_kind",
+	"forked_from_thread_id",
+	"forked_from_ordinal_exclusive",
+	"parent_thread_id",
+	"parent_turn_id",
+	"root_turn_id",
+	"subagent_kind",
+	"thread_source",
+	"turn_trigger",
+	"sandbox",
+	"sandbox_mode",
+	"auto_review_enabled",
+	"node_repl_auto_review_required",
+	"node_repl_disabled",
+	"workspaces",
+	"tool_namespaces_info",
+	"turn_started_at_unix_ms",
+	"history_ingest_requested",
+	"compaction",
+}
+
+func marshalCodexTurnMetadata(metadata map[string]any) (string, error) {
+	orderedKeys := make([]string, 0, len(metadata))
+	known := make(map[string]struct{}, len(codexTurnMetadataFieldOrder))
+	for _, key := range codexTurnMetadataFieldOrder {
+		known[key] = struct{}{}
+		if _, ok := metadata[key]; ok {
+			orderedKeys = append(orderedKeys, key)
+		}
+	}
+	extraKeys := make([]string, 0, len(metadata)-len(orderedKeys))
+	for key := range metadata {
+		if _, ok := known[key]; !ok {
+			extraKeys = append(extraKeys, key)
+		}
+	}
+	sort.Strings(extraKeys)
+	orderedKeys = append(orderedKeys, extraKeys...)
+
+	var encoded bytes.Buffer
+	_ = encoded.WriteByte('{')
+	for index, key := range orderedKeys {
+		if index > 0 {
+			_ = encoded.WriteByte(',')
+		}
+		keyJSON, err := marshalCodexJSONValue(key)
+		if err != nil {
+			return "", err
+		}
+		valueJSON, err := marshalCodexJSONValue(metadata[key])
+		if err != nil {
+			return "", err
+		}
+		_, _ = encoded.Write(keyJSON)
+		_ = encoded.WriteByte(':')
+		_, _ = encoded.Write(valueJSON)
+	}
+	_ = encoded.WriteByte('}')
+	return asciiOnlyJSON(encoded.Bytes()), nil
+}
+
+func marshalCodexJSONValue(value any) ([]byte, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
+}
+
+func asciiOnlyJSON(encoded []byte) string {
+	if bytes.IndexFunc(encoded, func(r rune) bool { return r > 0x7f }) < 0 {
+		return string(encoded)
+	}
+	const hex = "0123456789abcdef"
+	var out strings.Builder
+	out.Grow(len(encoded))
+	for len(encoded) > 0 {
+		r, size := utf8.DecodeRune(encoded)
+		encoded = encoded[size:]
+		if r <= 0x7f {
+			_ = out.WriteByte(byte(r))
+			continue
+		}
+		if r <= 0xffff {
+			writeCodexJSONUnicodeEscape(&out, uint16(r), hex)
+			continue
+		}
+		r -= 0x10000
+		writeCodexJSONUnicodeEscape(&out, uint16(0xd800+(r>>10)), hex)
+		writeCodexJSONUnicodeEscape(&out, uint16(0xdc00+(r&0x3ff)), hex)
+	}
+	return out.String()
+}
+
+func writeCodexJSONUnicodeEscape(out *strings.Builder, value uint16, hex string) {
+	_, _ = out.WriteString(`\u`)
+	_ = out.WriteByte(hex[(value>>12)&0xf])
+	_ = out.WriteByte(hex[(value>>8)&0xf])
+	_ = out.WriteByte(hex[(value>>4)&0xf])
+	_ = out.WriteByte(hex[value&0xf])
+}
+
 // CodexCanonicalClientVersion 返回当前生效的 Codex 客户端版本号。
 func CodexCanonicalClientVersion() string {
 	return resolveCodexOutboundIdentity("").version
@@ -114,7 +500,9 @@ func codexCanonicalUserAgent() string {
 	resolver := codexCanonicalUAResolver
 	codexCanonicalUAMu.RUnlock()
 	if resolver != nil {
-		if ua := resolver(); strings.TrimSpace(ua) != "" {
+		// Validate the raw resolver output before any normalization. Trimming a
+		// CR/LF-delimited value first could turn an invalid header into a valid UA.
+		if ua := resolver(); ua != "" && ua == strings.TrimSpace(ua) && !strings.ContainsAny(ua, "\r\n\x00") {
 			return ua
 		}
 	}
@@ -131,34 +519,84 @@ type codexOutboundIdentity struct {
 }
 
 // resolveCodexOutboundIdentity 由候选 User-Agent 推导自洽的出站身份。
-// candidateUA 为空时使用规范 User-Agent；推导不出官方身份时整体回退为规范 TUI 身份。
+// candidateUA 为空时使用规范 User-Agent；推导不出官方环境指纹时整体回退为规范 TUI 身份。
 //
-// 候选 UA（面板 / 账号级的管理员显式配置）只贡献客户端名与 OS / 架构 / 终端指纹，
-// 其自带的版本段一律用当前生效版本重建：一条填写于某个历史版本的 UA 否则会把出站身份
-// 永久钉死在陈旧版本上，绕过版本自动同步，落回上游优先降载的那一侧。
+// 候选 UA（面板 / 账号级的管理员显式配置）只贡献 OS / 架构 / 终端指纹；进程
+// originator、UA 首段、app-server 客户端名与两个版本声明都按真实 Codex TUI 固定重建。
+// 一条填写于某个历史版本的 UA 因此既不能把身份切换成 VSCode/Desktop，也不能绕过
+// 版本自动同步、把出站身份永久钉死在陈旧版本上。
 // 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
 func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
-	canonical := codexCanonicalUserAgent()
-	if _, _, ok := openai.PairCodexClientIdentity(canonical); !ok {
-		canonical = codexCLIUserAgent
-	}
-	ua := candidateUA
-	if strings.TrimSpace(ua) == "" {
-		ua = canonical
-	}
-	originator, pairedUA, ok := openai.PairCodexClientIdentity(ua)
+	canonicalCandidate := codexCanonicalUserAgent()
+	version := codexClientVersionFromUA(canonicalCandidate)
+	canonical, ok := buildCodexTUIUserAgentFromFingerprint(canonicalCandidate, version)
 	if !ok {
-		if originator, pairedUA, ok = openai.PairCodexClientIdentity(canonical); !ok {
-			originator, pairedUA = openai.CodexDefaultOriginator, codexCLIUserAgent
+		canonical = buildCodexCLIUserAgent(version)
+	}
+
+	userAgent := canonical
+	if candidate := strings.TrimSpace(candidateUA); candidate != "" {
+		if rebuilt, valid := buildCodexTUIUserAgentFromFingerprint(candidate, version); valid {
+			userAgent = rebuilt
 		}
 	}
-	// 生效版本只有一个来源：规范身份（面板版本号 → 自动同步值 → 内置常量，见
-	// SettingService.GetOpenAICodexClientVersion）。UA 与 version 头由此同源派生。
-	version := codexClientVersionFromUA(canonical)
-	if rebuilt := openai.SetCodexUserAgentVersion(pairedUA, version); rebuilt != "" {
-		pairedUA = rebuilt
+	return codexOutboundIdentity{
+		userAgent:  userAgent,
+		originator: openai.CodexDefaultOriginator,
+		version:    version,
 	}
-	return codexOutboundIdentity{userAgent: pairedUA, originator: originator, version: version}
+}
+
+// buildCodexTUIUserAgentFromFingerprint keeps only the environment portion of
+// an official Codex-family UA. The outbound product identity is always the
+// 0.154.0 Codex TUI shape observed in codex-rs default_client + app-server.
+func buildCodexTUIUserAgentFromFingerprint(candidateUA, version string) (string, bool) {
+	version = NormalizeCodexClientVersion(version)
+	if version == "" {
+		return "", false
+	}
+	environment, ok := codexCLIUserAgentEnvironment(candidateUA)
+	if !ok {
+		return "", false
+	}
+	return openai.CodexDefaultOriginator + "/" + version + " " + environment +
+		" (" + codexCLIClientName + "; " + version + ")", true
+}
+
+func codexCLIUserAgentEnvironment(candidateUA string) (string, bool) {
+	_, pairedUA, ok := openai.PairCodexClientIdentity(candidateUA)
+	if !ok {
+		return "", false
+	}
+	slash := strings.IndexByte(pairedUA, '/')
+	if slash <= 0 {
+		return "", false
+	}
+	rest := pairedUA[slash+1:]
+	space := strings.IndexByte(rest, ' ')
+	if space < 0 {
+		return "", false
+	}
+	environment := strings.TrimSpace(rest[space+1:])
+	if trailerStart := strings.LastIndex(environment, " ("); trailerStart >= 0 && strings.HasSuffix(environment, ")") {
+		trailer := environment[trailerStart+2 : len(environment)-1]
+		name := trailer
+		if semicolon := strings.IndexByte(name, ';'); semicolon >= 0 {
+			name = name[:semicolon]
+		}
+		if openai.IsCodexOfficialClientOriginator(strings.TrimSpace(name)) {
+			environment = strings.TrimSpace(environment[:trailerStart])
+		}
+	}
+	for i := 0; i < len(environment); i++ {
+		if environment[i] < 0x20 || environment[i] > 0x7e {
+			return "", false
+		}
+	}
+	if !codexCLIUserAgentEnvironmentPattern.MatchString(environment) {
+		return "", false
+	}
+	return environment, true
 }
 
 // codexClientVersionFromUA 取 UA 的版本段作为生效版本；
@@ -171,8 +609,12 @@ func codexClientVersionFromUA(ua string) string {
 	return version
 }
 
-// ensureCodexIdentityHeaders 补齐 OAuth（ChatGPT 内部接口）出站请求所需的 Codex 身份头。
-// 已有 User-Agent 与 version 保持不变，交给紧随其后的 enforceCodexIdentityHeaders 收口。
+// ensureCodexIdentityHeaders 补齐 OAuth（ChatGPT 内部接口）HTTP 出站请求所需的 Codex 身份头。
+// 已有 User-Agent 保持不变，交给紧随其后的 enforceCodexIdentityHeaders 收口。
+// OpenAI-Beta 由具体传输协商：当前 Codex HTTP 不发送旧 responses=experimental，
+// WebSocket 则在握手处发送 responses_websockets=2026-02-06。
+// 官方客户端不发送独立 version 头；版本仅体现在 User-Agent，以及 /models 的
+// client_version 查询参数中。这里主动删除客户端透传值，避免形成额外线协议特征。
 func ensureCodexIdentityHeaders(h http.Header) {
 	if h == nil {
 		return
@@ -184,19 +626,21 @@ func ensureCodexIdentityHeaders(h http.Header) {
 	if strings.TrimSpace(h.Get("originator")) == "" {
 		h.Set("originator", identity.originator)
 	}
-	if strings.TrimSpace(h.Get("version")) == "" {
-		h.Set("version", identity.version)
-	}
-	h.Set("OpenAI-Beta", "responses=experimental")
+	h.Del("version")
 }
 
-// applyOpenAICodexProbeHeaders 为合成探测请求补齐 Codex 身份和引擎指纹。
+// applyOpenAICodexProbeHeaders 为合成探测请求补齐 Codex 身份和 API Key
+// 兼容协商。会话/window/installation 等载体由具体调用方按真实来源设置，
+// 这里不生成每次变化的代理身份。
 func applyOpenAICodexProbeHeaders(h http.Header) {
 	if h == nil {
 		return
 	}
 	ensureCodexIdentityHeaders(h)
-	h.Set("X-Codex-Window-ID", uuid.NewString())
+	// API-key 能力探针仍保留历史兼容协商；OAuth 调用方会在最终出站前按
+	// 当前 Codex HTTP 行为移除该 token。
+	h.Set("Version", CodexCanonicalClientVersion())
+	h.Set("OpenAI-Beta", "responses=experimental")
 }
 
 // enforceCodexIdentityHeaders 收口 OAuth（ChatGPT 内部接口）出站请求的客户端身份头。
@@ -205,22 +649,28 @@ func enforceCodexIdentityHeaders(h http.Header) {
 	enforceCodexIdentityHeadersWithUA(h, "")
 }
 
-// enforceCodexIdentityHeadersWithUA 强制统一 OAuth 出站身份：User-Agent / originator / version
+// enforceCodexIdentityHeadersWithUA 强制统一 OAuth 出站身份：User-Agent / originator
 // 一律改写为网关的规范身份，客户端自报身份不参与构造。上游在容量紧张时按客户端身份分优先级
 // 降载，被降载的请求会拿到 HTTP 200 + 流内 server_is_overloaded；统一出口可确保没有请求带着
 // 第三方或陈旧身份出站，也天然满足 originator 与 UA 首段配套的上游校验（issue #3901）。
 //
 // overrideUA 是账号级自定义 User-Agent：管理员的显式配置仍然生效，但只贡献客户端名与
-// OS / 架构 / 终端指纹——版本段与 originator 都由规范身份重建，不允许出现自相矛盾或陈旧的身份。
+// OS / 架构 / 终端指纹——UA 版本段与 originator 都由规范身份重建，不允许出现自相矛盾或陈旧的身份。
 //
 // 强制统一被 gateway.disable_codex_identity_enforcement 关闭时，退回「按最终 User-Agent 配对
-// originator + version 门槛校正」的收口语义，供上游策略变动时回滚。
+// originator 配对」的收口语义，供上游策略变动时回滚。
 //
 // 仅对携带 originator 的请求生效：compat 桥接等非 ChatGPT 内部接口路径会显式删除 originator，
 // 不应被补回。需要从缺失身份头恢复的调用方应先调用 ensureCodexIdentityHeaders。
 // 必须在所有 User-Agent 改写之后调用。
 func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
-	if h == nil || h.Get("originator") == "" {
+	if h == nil {
+		return
+	}
+	// 即使调用方刻意移除了 originator（例如兼容桥），本地环境与超时载体
+	// 也必须在 OAuth 最终边界统一清除。
+	sanitizeCodexOAuthOutboundHeaders(h)
+	if h.Get("originator") == "" {
 		return
 	}
 	if !codexIdentityEnforcement.Load() {
@@ -230,21 +680,17 @@ func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	h.Set("user-agent", identity.userAgent)
 	h.Set("originator", identity.originator)
-	h.Set("version", identity.version)
 }
 
 // pairCodexIdentityHeaders 是关闭强制统一后的兜底收口：保留客户端真实身份，
-// 仅保证 originator 与最终 User-Agent 首段配套、version 不低于上游门槛（issue #3901）。
+// 仅保证 originator 与最终 User-Agent 首段配套（issue #3901）。
 func pairCodexIdentityHeaders(h http.Header) {
 	originator, pairedUA, ok := openai.PairCodexClientIdentity(h.Get("user-agent"))
 	if !ok {
 		identity := resolveCodexOutboundIdentity("")
 		originator, pairedUA = identity.originator, identity.userAgent
-		h.Set("version", identity.version)
 	}
 	h.Set("user-agent", pairedUA)
 	h.Set("originator", originator)
-	if v := strings.TrimSpace(h.Get("version")); v != "" && CompareVersions(v, codexUpstreamMinVersion) < 0 {
-		h.Set("version", resolveCodexOutboundIdentity("").version)
-	}
+	h.Del("version")
 }
