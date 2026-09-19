@@ -518,7 +518,8 @@ func TestSchedulerRebuildBatchKeepsSimpleModeBucketGroupsIndependent(t *testing.
 	svc := newBatchQueryTestService(cache, repo, config.RunModeSimple)
 
 	require.NoError(t, svc.rebuildBuckets(context.Background(), []SchedulerBucket{single, forced}, "test"))
-	require.Equal(t, 2, repo.callCount(batchAccountQueryKey{platform: PlatformOpenAI}))
+	require.Equal(t, 1, repo.callCount(batchAccountQueryKey{groupID: single.GroupID, platform: PlatformOpenAI}))
+	require.Equal(t, 1, repo.callCount(batchAccountQueryKey{platform: PlatformOpenAI}))
 }
 
 func TestSchedulerRebuildBatchDoesNotCacheMixedOrHistoricalQueries(t *testing.T) {
