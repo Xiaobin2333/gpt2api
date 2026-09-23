@@ -457,7 +457,7 @@ func marshalCodexJSONValue(value any) ([]byte, error) {
 }
 
 func asciiOnlyJSON(encoded []byte) string {
-	if bytes.IndexFunc(encoded, func(r rune) bool { return r > 0x7f }) < 0 {
+	if bytes.IndexFunc(encoded, func(r rune) bool { return r >= 0x7f }) < 0 {
 		return string(encoded)
 	}
 	const hex = "0123456789abcdef"
@@ -466,7 +466,7 @@ func asciiOnlyJSON(encoded []byte) string {
 	for len(encoded) > 0 {
 		r, size := utf8.DecodeRune(encoded)
 		encoded = encoded[size:]
-		if r <= 0x7f {
+		if r < 0x7f {
 			_ = out.WriteByte(byte(r))
 			continue
 		}
