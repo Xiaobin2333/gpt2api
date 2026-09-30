@@ -334,8 +334,9 @@ type SystemSettings struct {
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
-	// cyber 会话屏蔽开关 + TTL
+	// cyber 会话屏蔽开关、用户白名单、TTL 与分组覆盖策略
 	CyberSessionBlockEnabled       bool                           `json:"cyber_session_block_enabled"`
+	CyberPolicyUserAllowlist       string                         `json:"cyber_policy_user_allowlist"`
 	CyberSessionBlockTTLSeconds    int                            `json:"cyber_session_block_ttl_seconds"`
 	CyberSessionBlockGroupPolicies []CyberSessionBlockGroupPolicy `json:"cyber_session_block_group_policies"`
 

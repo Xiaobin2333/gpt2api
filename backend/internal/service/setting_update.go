@@ -449,6 +449,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// cyber 会话屏蔽开关 + TTL
 	updates[SettingKeyCyberSessionBlockEnabled] = strconv.FormatBool(settings.CyberSessionBlockEnabled)
+	if _, err := ParseCyberPolicyUserAllowlist(settings.CyberPolicyUserAllowlist); err != nil {
+		return nil, err
+	}
+	updates[SettingKeyCyberPolicyUserAllowlist] = settings.CyberPolicyUserAllowlist
 	if settings.CyberSessionBlockTTLSeconds > 0 {
 		updates[SettingKeyCyberSessionBlockTTLSeconds] = strconv.Itoa(settings.CyberSessionBlockTTLSeconds)
 	}
@@ -815,12 +819,18 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	for _, policy := range settings.CyberSessionBlockGroupPolicies {
 		groupPolicies[policy.GroupID] = policy.Enabled
 	}
+	// Publish the complete saved runtime atomically so both the user allowlist
+	// and group overrides remain available if the next DB refresh fails.
+	s.cyberSessionBlockRuntimeMu.Lock()
+	allowlistedUsers, _ := ParseCyberPolicyUserAllowlist(settings.CyberPolicyUserAllowlist)
 	s.cyberSessionBlockRuntimeCache.Store(&cachedCyberSessionBlockRuntime{
-		enabled:       settings.CyberSessionBlockEnabled,
-		ttl:           time.Duration(settings.CyberSessionBlockTTLSeconds) * time.Second,
-		groupPolicies: groupPolicies,
-		expiresAt:     time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
+		allowlistedUsers: allowlistedUsers,
+		enabled:          settings.CyberSessionBlockEnabled,
+		ttl:              time.Duration(settings.CyberSessionBlockTTLSeconds) * time.Second,
+		groupPolicies:    groupPolicies,
+		expiresAt:        time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
 	})
+	s.cyberSessionBlockRuntimeMu.Unlock()
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}
