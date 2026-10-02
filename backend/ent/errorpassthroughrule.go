@@ -36,6 +36,8 @@ type ErrorPassthroughRule struct {
 	MatchMode string `json:"match_mode,omitempty"`
 	// Platforms holds the value of the "platforms" field.
 	Platforms []string `json:"platforms,omitempty"`
+	// AccountIds holds the value of the "account_ids" field.
+	AccountIds []int64 `json:"account_ids,omitempty"`
 	// PassthroughCode holds the value of the "passthrough_code" field.
 	PassthroughCode bool `json:"passthrough_code,omitempty"`
 	// ResponseCode holds the value of the "response_code" field.
@@ -56,7 +58,7 @@ func (*ErrorPassthroughRule) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case errorpassthroughrule.FieldErrorCodes, errorpassthroughrule.FieldKeywords, errorpassthroughrule.FieldPlatforms:
+		case errorpassthroughrule.FieldErrorCodes, errorpassthroughrule.FieldKeywords, errorpassthroughrule.FieldPlatforms, errorpassthroughrule.FieldAccountIds:
 			values[i] = new([]byte)
 		case errorpassthroughrule.FieldEnabled, errorpassthroughrule.FieldPassthroughCode, errorpassthroughrule.FieldPassthroughBody, errorpassthroughrule.FieldSkipMonitoring:
 			values[i] = new(sql.NullBool)
@@ -145,6 +147,14 @@ func (_m *ErrorPassthroughRule) assignValues(columns []string, values []any) err
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.Platforms); err != nil {
 					return fmt.Errorf("unmarshal field platforms: %w", err)
+				}
+			}
+		case errorpassthroughrule.FieldAccountIds:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field account_ids", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.AccountIds); err != nil {
+					return fmt.Errorf("unmarshal field account_ids: %w", err)
 				}
 			}
 		case errorpassthroughrule.FieldPassthroughCode:
@@ -248,6 +258,9 @@ func (_m *ErrorPassthroughRule) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("platforms=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Platforms))
+	builder.WriteString(", ")
+	builder.WriteString("account_ids=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AccountIds))
 	builder.WriteString(", ")
 	builder.WriteString("passthrough_code=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PassthroughCode))

@@ -1308,6 +1308,9 @@ export default {
 
     // Error Passthrough Rules
     errorPassthrough: {
+      globalScope: '全局规则',
+      accountScope: '账号：{ids}',
+      invalidAccountIDs: '账号 ID 必须是正整数，多个 ID 用逗号或空格分隔',
       title: '错误透传规则',
       description: '配置上游错误如何返回给客户端',
       createRule: '创建规则',
@@ -1346,7 +1349,7 @@ export default {
         name: '规则名称',
         namePlaceholder: '例如：上下文超限透传',
         priority: '优先级',
-        priorityHint: '数值越小优先级越高，优先匹配',
+        priorityHint: '账号规则与全局规则统一排序：数值小的优先，相同时按规则 ID 从小到大，首条命中生效',
         description: '规则描述',
         descriptionPlaceholder: '描述此规则的用途...',
         matchConditions: '匹配条件',
@@ -1359,6 +1362,9 @@ export default {
         matchMode: '匹配模式',
         platforms: '适用平台',
         platformsHint: '不选择表示适用于所有平台',
+        accountIDs: '适用账号 ID',
+        accountIDsPlaceholder: '留空适用所有账号，例如：12, 34',
+        accountIDsHint: '指定后仅匹配这些上游账号，仍需满足平台和匹配条件。留空为全局规则；从账号入口编辑全局规则也会影响其他账号。',
         responseBehavior: '响应行为',
         passthroughCode: '透传上游状态码',
         responseCode: '自定义状态码',

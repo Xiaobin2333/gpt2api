@@ -7,7 +7,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
-// ErrorPassthroughRule 全局错误透传规则
+// ErrorPassthroughRule 全局或指定账号的错误透传规则
 // 用于控制上游错误如何返回给客户端
 type ErrorPassthroughRule struct {
 	ID              int64     `json:"id"`
@@ -18,6 +18,7 @@ type ErrorPassthroughRule struct {
 	Keywords        []string  `json:"keywords"`         // 匹配的关键词列表（OR关系）
 	MatchMode       string    `json:"match_mode"`       // "any"(任一条件) 或 "all"(所有条件)
 	Platforms       []string  `json:"platforms"`        // 适用平台列表
+	AccountIDs      []int64   `json:"account_ids"`      // 空列表适用所有账号；否则仅适用指定上游账号
 	PassthroughCode bool      `json:"passthrough_code"` // 是否透传原始状态码
 	ResponseCode    *int      `json:"response_code"`    // 自定义状态码（passthrough_code=false 时使用）
 	PassthroughBody bool      `json:"passthrough_body"` // 是否透传原始错误信息
@@ -68,6 +69,11 @@ func AllPlatforms() []string {
 
 // Validate 验证规则配置的有效性
 func (r *ErrorPassthroughRule) Validate() error {
+	for _, id := range r.AccountIDs {
+		if id <= 0 {
+			return &ValidationError{Field: "account_ids", Message: "account IDs must be positive"}
+		}
+	}
 	if r.Name == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}
 	}

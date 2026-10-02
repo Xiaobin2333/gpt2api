@@ -152,6 +152,24 @@ func (_u *ErrorPassthroughRuleUpdate) ClearPlatforms() *ErrorPassthroughRuleUpda
 	return _u
 }
 
+// SetAccountIds sets the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdate) SetAccountIds(v []int64) *ErrorPassthroughRuleUpdate {
+	_u.mutation.SetAccountIds(v)
+	return _u
+}
+
+// AppendAccountIds appends value to the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdate) AppendAccountIds(v []int64) *ErrorPassthroughRuleUpdate {
+	_u.mutation.AppendAccountIds(v)
+	return _u
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdate) ClearAccountIds() *ErrorPassthroughRuleUpdate {
+	_u.mutation.ClearAccountIds()
+	return _u
+}
+
 // SetPassthroughCode sets the "passthrough_code" field.
 func (_u *ErrorPassthroughRuleUpdate) SetPassthroughCode(v bool) *ErrorPassthroughRuleUpdate {
 	_u.mutation.SetPassthroughCode(v)
@@ -380,6 +398,17 @@ func (_u *ErrorPassthroughRuleUpdate) sqlSave(ctx context.Context) (_node int, e
 	if _u.mutation.PlatformsCleared() {
 		_spec.ClearField(errorpassthroughrule.FieldPlatforms, field.TypeJSON)
 	}
+	if value, ok := _u.mutation.AccountIds(); ok {
+		_spec.SetField(errorpassthroughrule.FieldAccountIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, errorpassthroughrule.FieldAccountIds, value)
+		})
+	}
+	if _u.mutation.AccountIdsCleared() {
+		_spec.ClearField(errorpassthroughrule.FieldAccountIds, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.PassthroughCode(); ok {
 		_spec.SetField(errorpassthroughrule.FieldPassthroughCode, field.TypeBool, value)
 	}
@@ -550,6 +579,24 @@ func (_u *ErrorPassthroughRuleUpdateOne) AppendPlatforms(v []string) *ErrorPasst
 // ClearPlatforms clears the value of the "platforms" field.
 func (_u *ErrorPassthroughRuleUpdateOne) ClearPlatforms() *ErrorPassthroughRuleUpdateOne {
 	_u.mutation.ClearPlatforms()
+	return _u
+}
+
+// SetAccountIds sets the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdateOne) SetAccountIds(v []int64) *ErrorPassthroughRuleUpdateOne {
+	_u.mutation.SetAccountIds(v)
+	return _u
+}
+
+// AppendAccountIds appends value to the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdateOne) AppendAccountIds(v []int64) *ErrorPassthroughRuleUpdateOne {
+	_u.mutation.AppendAccountIds(v)
+	return _u
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (_u *ErrorPassthroughRuleUpdateOne) ClearAccountIds() *ErrorPassthroughRuleUpdateOne {
+	_u.mutation.ClearAccountIds()
 	return _u
 }
 
@@ -810,6 +857,17 @@ func (_u *ErrorPassthroughRuleUpdateOne) sqlSave(ctx context.Context) (_node *Er
 	}
 	if _u.mutation.PlatformsCleared() {
 		_spec.ClearField(errorpassthroughrule.FieldPlatforms, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AccountIds(); ok {
+		_spec.SetField(errorpassthroughrule.FieldAccountIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, errorpassthroughrule.FieldAccountIds, value)
+		})
+	}
+	if _u.mutation.AccountIdsCleared() {
+		_spec.ClearField(errorpassthroughrule.FieldAccountIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.PassthroughCode(); ok {
 		_spec.SetField(errorpassthroughrule.FieldPassthroughCode, field.TypeBool, value)

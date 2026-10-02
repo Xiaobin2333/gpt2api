@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -155,6 +156,12 @@ func (s *ErrorPassthroughService) Delete(ctx context.Context, id int64) error {
 // MatchRule 匹配透传规则
 // 返回第一个匹配的规则，如果没有匹配则返回 nil
 func (s *ErrorPassthroughService) MatchRule(platform string, statusCode int, body []byte) *model.ErrorPassthroughRule {
+	return s.MatchRuleForAccount(platform, 0, statusCode, body)
+}
+
+// MatchRuleForAccount merges global and applicable account rules in priority order.
+// An unknown account can only match global rules.
+func (s *ErrorPassthroughService) MatchRuleForAccount(platform string, accountID int64, statusCode int, body []byte) *model.ErrorPassthroughRule {
 	rules := s.getCachedRules()
 	if len(rules) == 0 {
 		return nil
@@ -166,6 +173,9 @@ func (s *ErrorPassthroughService) MatchRule(platform string, statusCode int, bod
 
 	for _, rule := range rules {
 		if !rule.Enabled {
+			continue
+		}
+		if len(rule.AccountIDs) > 0 && (accountID <= 0 || !slices.Contains(rule.AccountIDs, accountID)) {
 			continue
 		}
 		if !s.platformMatchesCached(rule, lowerPlatform) {
@@ -263,6 +273,9 @@ func (s *ErrorPassthroughService) setLocalCache(rules []*model.ErrorPassthroughR
 
 	// 按优先级排序
 	sort.Slice(cached, func(i, j int) bool {
+		if cached[i].Priority == cached[j].Priority {
+			return cached[i].ID < cached[j].ID
+		}
 		return cached[i].Priority < cached[j].Priority
 	})
 

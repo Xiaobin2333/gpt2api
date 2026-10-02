@@ -17,6 +17,7 @@ export interface ErrorPassthroughRule {
   keywords: string[]
   match_mode: 'any' | 'all'
   platforms: string[]
+  account_ids?: number[]
   passthrough_code: boolean
   response_code: number | null
   passthrough_body: boolean
@@ -31,6 +32,7 @@ export interface ErrorPassthroughRule {
  * Create rule request
  */
 export interface CreateRuleRequest {
+  account_ids?: number[]
   name: string
   enabled?: boolean
   priority?: number
@@ -50,6 +52,7 @@ export interface CreateRuleRequest {
  * Update rule request
  */
 export interface UpdateRuleRequest {
+  account_ids?: number[]
   name?: string
   enabled?: boolean
   priority?: number

@@ -875,6 +875,7 @@ var (
 		{Name: "keywords", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "match_mode", Type: field.TypeString, Size: 10, Default: "any"},
 		{Name: "platforms", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "account_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "passthrough_code", Type: field.TypeBool, Default: true},
 		{Name: "response_code", Type: field.TypeInt, Nullable: true},
 		{Name: "passthrough_body", Type: field.TypeBool, Default: true},

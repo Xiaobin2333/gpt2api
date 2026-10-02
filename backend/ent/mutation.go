@@ -20774,6 +20774,8 @@ type ErrorPassthroughRuleMutation struct {
 	match_mode        *string
 	platforms         *[]string
 	appendplatforms   []string
+	account_ids       *[]int64
+	appendaccount_ids []int64
 	passthrough_code  *bool
 	response_code     *int
 	addresponse_code  *int
@@ -21316,6 +21318,71 @@ func (m *ErrorPassthroughRuleMutation) ResetPlatforms() {
 	delete(m.clearedFields, errorpassthroughrule.FieldPlatforms)
 }
 
+// SetAccountIds sets the "account_ids" field.
+func (m *ErrorPassthroughRuleMutation) SetAccountIds(i []int64) {
+	m.account_ids = &i
+	m.appendaccount_ids = nil
+}
+
+// AccountIds returns the value of the "account_ids" field in the mutation.
+func (m *ErrorPassthroughRuleMutation) AccountIds() (r []int64, exists bool) {
+	v := m.account_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountIds returns the old "account_ids" field's value of the ErrorPassthroughRule entity.
+// If the ErrorPassthroughRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ErrorPassthroughRuleMutation) OldAccountIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountIds: %w", err)
+	}
+	return oldValue.AccountIds, nil
+}
+
+// AppendAccountIds adds i to the "account_ids" field.
+func (m *ErrorPassthroughRuleMutation) AppendAccountIds(i []int64) {
+	m.appendaccount_ids = append(m.appendaccount_ids, i...)
+}
+
+// AppendedAccountIds returns the list of values that were appended to the "account_ids" field in this mutation.
+func (m *ErrorPassthroughRuleMutation) AppendedAccountIds() ([]int64, bool) {
+	if len(m.appendaccount_ids) == 0 {
+		return nil, false
+	}
+	return m.appendaccount_ids, true
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (m *ErrorPassthroughRuleMutation) ClearAccountIds() {
+	m.account_ids = nil
+	m.appendaccount_ids = nil
+	m.clearedFields[errorpassthroughrule.FieldAccountIds] = struct{}{}
+}
+
+// AccountIdsCleared returns if the "account_ids" field was cleared in this mutation.
+func (m *ErrorPassthroughRuleMutation) AccountIdsCleared() bool {
+	_, ok := m.clearedFields[errorpassthroughrule.FieldAccountIds]
+	return ok
+}
+
+// ResetAccountIds resets all changes to the "account_ids" field.
+func (m *ErrorPassthroughRuleMutation) ResetAccountIds() {
+	m.account_ids = nil
+	m.appendaccount_ids = nil
+	delete(m.clearedFields, errorpassthroughrule.FieldAccountIds)
+}
+
 // SetPassthroughCode sets the "passthrough_code" field.
 func (m *ErrorPassthroughRuleMutation) SetPassthroughCode(b bool) {
 	m.passthrough_code = &b
@@ -21626,7 +21693,7 @@ func (m *ErrorPassthroughRuleMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ErrorPassthroughRuleMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 16)
 	if m.created_at != nil {
 		fields = append(fields, errorpassthroughrule.FieldCreatedAt)
 	}
@@ -21653,6 +21720,9 @@ func (m *ErrorPassthroughRuleMutation) Fields() []string {
 	}
 	if m.platforms != nil {
 		fields = append(fields, errorpassthroughrule.FieldPlatforms)
+	}
+	if m.account_ids != nil {
+		fields = append(fields, errorpassthroughrule.FieldAccountIds)
 	}
 	if m.passthrough_code != nil {
 		fields = append(fields, errorpassthroughrule.FieldPassthroughCode)
@@ -21698,6 +21768,8 @@ func (m *ErrorPassthroughRuleMutation) Field(name string) (ent.Value, bool) {
 		return m.MatchMode()
 	case errorpassthroughrule.FieldPlatforms:
 		return m.Platforms()
+	case errorpassthroughrule.FieldAccountIds:
+		return m.AccountIds()
 	case errorpassthroughrule.FieldPassthroughCode:
 		return m.PassthroughCode()
 	case errorpassthroughrule.FieldResponseCode:
@@ -21737,6 +21809,8 @@ func (m *ErrorPassthroughRuleMutation) OldField(ctx context.Context, name string
 		return m.OldMatchMode(ctx)
 	case errorpassthroughrule.FieldPlatforms:
 		return m.OldPlatforms(ctx)
+	case errorpassthroughrule.FieldAccountIds:
+		return m.OldAccountIds(ctx)
 	case errorpassthroughrule.FieldPassthroughCode:
 		return m.OldPassthroughCode(ctx)
 	case errorpassthroughrule.FieldResponseCode:
@@ -21820,6 +21894,13 @@ func (m *ErrorPassthroughRuleMutation) SetField(name string, value ent.Value) er
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPlatforms(v)
+		return nil
+	case errorpassthroughrule.FieldAccountIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountIds(v)
 		return nil
 	case errorpassthroughrule.FieldPassthroughCode:
 		v, ok := value.(bool)
@@ -21929,6 +22010,9 @@ func (m *ErrorPassthroughRuleMutation) ClearedFields() []string {
 	if m.FieldCleared(errorpassthroughrule.FieldPlatforms) {
 		fields = append(fields, errorpassthroughrule.FieldPlatforms)
 	}
+	if m.FieldCleared(errorpassthroughrule.FieldAccountIds) {
+		fields = append(fields, errorpassthroughrule.FieldAccountIds)
+	}
 	if m.FieldCleared(errorpassthroughrule.FieldResponseCode) {
 		fields = append(fields, errorpassthroughrule.FieldResponseCode)
 	}
@@ -21960,6 +22044,9 @@ func (m *ErrorPassthroughRuleMutation) ClearField(name string) error {
 		return nil
 	case errorpassthroughrule.FieldPlatforms:
 		m.ClearPlatforms()
+		return nil
+	case errorpassthroughrule.FieldAccountIds:
+		m.ClearAccountIds()
 		return nil
 	case errorpassthroughrule.FieldResponseCode:
 		m.ClearResponseCode()
@@ -22004,6 +22091,9 @@ func (m *ErrorPassthroughRuleMutation) ResetField(name string) error {
 		return nil
 	case errorpassthroughrule.FieldPlatforms:
 		m.ResetPlatforms()
+		return nil
+	case errorpassthroughrule.FieldAccountIds:
+		m.ResetAccountIds()
 		return nil
 	case errorpassthroughrule.FieldPassthroughCode:
 		m.ResetPassthroughCode()

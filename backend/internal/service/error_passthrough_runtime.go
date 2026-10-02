@@ -1,8 +1,26 @@
 package service
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
+)
 
 const errorPassthroughServiceContextKey = "error_passthrough_service"
+
+// MatchRuleForRequest uses the actual selected upstream account, refreshed on
+// each failover attempt. The request protocol may differ from its platform.
+func (s *ErrorPassthroughService) MatchRuleForRequest(c *gin.Context, platform string, status int, body []byte) *model.ErrorPassthroughRule {
+	var accountID int64
+	if c != nil && c.Request != nil {
+		ctx := c.Request.Context()
+		accountID, _ = ctx.Value(ctxkey.AccountID).(int64)
+		if selectedPlatform, ok := ctx.Value(ctxkey.Platform).(string); ok && selectedPlatform != "" {
+			platform = selectedPlatform
+		}
+	}
+	return s.MatchRuleForAccount(platform, accountID, status, body)
+}
 
 // BindErrorPassthroughService 将错误透传服务绑定到请求上下文，供 service 层在非 failover 场景下复用规则。
 func BindErrorPassthroughService(c *gin.Context, svc *ErrorPassthroughService) {
@@ -46,7 +64,7 @@ func applyErrorPassthroughRule(
 		return status, errType, errMsg, false
 	}
 
-	rule := svc.MatchRule(platform, upstreamStatus, responseBody)
+	rule := svc.MatchRuleForRequest(c, platform, upstreamStatus, responseBody)
 	if rule == nil {
 		return status, errType, errMsg, false
 	}

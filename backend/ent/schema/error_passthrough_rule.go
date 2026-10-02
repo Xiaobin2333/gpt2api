@@ -81,6 +81,11 @@ func (ErrorPassthroughRule) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
+		// 空列表保留全局规则语义，不因账号删除而扩大作用范围。
+		field.JSON("account_ids", []int64{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+
 		// passthrough_code: 是否透传上游原始状态码
 		// true: 使用上游返回的状态码
 		// false: 使用 response_code 指定的状态码

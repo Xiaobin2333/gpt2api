@@ -21,7 +21,7 @@ func NewErrorPassthroughRepository(client *ent.Client) service.ErrorPassthroughR
 // List 获取所有规则
 func (r *errorPassthroughRepository) List(ctx context.Context) ([]*model.ErrorPassthroughRule, error) {
 	rules, err := r.client.ErrorPassthroughRule.Query().
-		Order(ent.Asc(errorpassthroughrule.FieldPriority)).
+		Order(ent.Asc(errorpassthroughrule.FieldPriority, errorpassthroughrule.FieldID)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -76,6 +76,9 @@ func (r *errorPassthroughRepository) Create(ctx context.Context, rule *model.Err
 		builder.SetDescription(*rule.Description)
 	}
 
+	if len(rule.AccountIDs) > 0 {
+		builder.SetAccountIds(rule.AccountIDs)
+	}
 	created, err := builder.Save(ctx)
 	if err != nil {
 		return nil, err
@@ -126,6 +129,11 @@ func (r *errorPassthroughRepository) Update(ctx context.Context, rule *model.Err
 		builder.ClearDescription()
 	}
 
+	if len(rule.AccountIDs) > 0 {
+		builder.SetAccountIds(rule.AccountIDs)
+	} else {
+		builder.ClearAccountIds()
+	}
 	updated, err := builder.Save(ctx)
 	if err != nil {
 		return nil, err
@@ -149,6 +157,7 @@ func (r *errorPassthroughRepository) toModel(e *ent.ErrorPassthroughRule) *model
 		Keywords:        e.Keywords,
 		MatchMode:       e.MatchMode,
 		Platforms:       e.Platforms,
+		AccountIDs:      e.AccountIds,
 		PassthroughCode: e.PassthroughCode,
 		PassthroughBody: e.PassthroughBody,
 		SkipMonitoring:  e.SkipMonitoring,
@@ -167,6 +176,9 @@ func (r *errorPassthroughRepository) toModel(e *ent.ErrorPassthroughRule) *model
 	}
 
 	// 确保切片不为 nil
+	if rule.AccountIDs == nil {
+		rule.AccountIDs = []int64{}
+	}
 	if rule.ErrorCodes == nil {
 		rule.ErrorCodes = []int{}
 	}

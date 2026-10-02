@@ -31,6 +31,8 @@ const (
 	FieldMatchMode = "match_mode"
 	// FieldPlatforms holds the string denoting the platforms field in the database.
 	FieldPlatforms = "platforms"
+	// FieldAccountIds holds the string denoting the account_ids field in the database.
+	FieldAccountIds = "account_ids"
 	// FieldPassthroughCode holds the string denoting the passthrough_code field in the database.
 	FieldPassthroughCode = "passthrough_code"
 	// FieldResponseCode holds the string denoting the response_code field in the database.
@@ -59,6 +61,7 @@ var Columns = []string{
 	FieldKeywords,
 	FieldMatchMode,
 	FieldPlatforms,
+	FieldAccountIds,
 	FieldPassthroughCode,
 	FieldResponseCode,
 	FieldPassthroughBody,

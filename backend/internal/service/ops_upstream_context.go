@@ -580,7 +580,7 @@ func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEve
 		body = ev.Message
 	}
 
-	rule := svc.MatchRule(ev.Platform, ev.UpstreamStatusCode, []byte(body))
+	rule := svc.MatchRuleForAccount(ev.Platform, ev.AccountID, ev.UpstreamStatusCode, []byte(body))
 	if rule != nil && rule.SkipMonitoring {
 		ev.SkipMonitoring = true
 	}

@@ -1314,6 +1314,9 @@ export default {
 
     // Error Passthrough Rules
     errorPassthrough: {
+      globalScope: 'Global rule',
+      accountScope: 'Accounts: {ids}',
+      invalidAccountIDs: 'Account IDs must be positive integers, separated by commas or spaces',
       title: 'Error Passthrough Rules',
       description: 'Configure how upstream errors are returned to clients',
       createRule: 'Create Rule',
@@ -1352,7 +1355,7 @@ export default {
         name: 'Rule Name',
         namePlaceholder: 'e.g., Context Limit Passthrough',
         priority: 'Priority',
-        priorityHint: 'Lower values have higher priority',
+        priorityHint: 'Global and account rules share priority order: lower values first, then lower rule ID. First match wins.',
         description: 'Description',
         descriptionPlaceholder: 'Describe the purpose of this rule...',
         matchConditions: 'Match Conditions',
@@ -1365,6 +1368,9 @@ export default {
         matchMode: 'Match Mode',
         platforms: 'Platforms',
         platformsHint: 'Leave empty to apply to all platforms',
+        accountIDs: 'Account IDs',
+        accountIDsPlaceholder: 'Empty for all accounts, e.g. 12, 34',
+        accountIDsHint: 'Only these upstream accounts can match; platform and conditions still apply. Empty means global. Editing a global rule from an account also affects other accounts.',
         responseBehavior: 'Response Behavior',
         passthroughCode: 'Passthrough upstream status code',
         responseCode: 'Custom status code',

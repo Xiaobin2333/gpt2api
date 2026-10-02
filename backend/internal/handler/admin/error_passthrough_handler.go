@@ -21,6 +21,7 @@ func NewErrorPassthroughHandler(service *service.ErrorPassthroughService) *Error
 
 // CreateErrorPassthroughRuleRequest 创建规则请求
 type CreateErrorPassthroughRuleRequest struct {
+	AccountIDs      []int64  `json:"account_ids"`
 	Name            string   `json:"name" binding:"required"`
 	Enabled         *bool    `json:"enabled"`
 	Priority        int      `json:"priority"`
@@ -38,6 +39,7 @@ type CreateErrorPassthroughRuleRequest struct {
 
 // UpdateErrorPassthroughRuleRequest 更新规则请求（部分更新，所有字段可选）
 type UpdateErrorPassthroughRuleRequest struct {
+	AccountIDs      []int64  `json:"account_ids"`
 	Name            *string  `json:"name"`
 	Enabled         *bool    `json:"enabled"`
 	Priority        *int     `json:"priority"`
@@ -101,6 +103,7 @@ func (h *ErrorPassthroughHandler) Create(c *gin.Context) {
 		ErrorCodes: req.ErrorCodes,
 		Keywords:   req.Keywords,
 		Platforms:  req.Platforms,
+		AccountIDs: req.AccountIDs,
 	}
 
 	// 设置默认值
@@ -191,6 +194,7 @@ func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 		Keywords:        existing.Keywords,
 		MatchMode:       existing.MatchMode,
 		Platforms:       existing.Platforms,
+		AccountIDs:      existing.AccountIDs,
 		PassthroughCode: existing.PassthroughCode,
 		ResponseCode:    existing.ResponseCode,
 		PassthroughBody: existing.PassthroughBody,
@@ -200,6 +204,9 @@ func (h *ErrorPassthroughHandler) Update(c *gin.Context) {
 	}
 
 	// 应用请求中提供的更新
+	if req.AccountIDs != nil {
+		rule.AccountIDs = req.AccountIDs
+	}
 	if req.Name != nil {
 		rule.Name = *req.Name
 	}

@@ -404,6 +404,16 @@ func PlatformsNotNil() predicate.ErrorPassthroughRule {
 	return predicate.ErrorPassthroughRule(sql.FieldNotNull(FieldPlatforms))
 }
 
+// AccountIdsIsNil applies the IsNil predicate on the "account_ids" field.
+func AccountIdsIsNil() predicate.ErrorPassthroughRule {
+	return predicate.ErrorPassthroughRule(sql.FieldIsNull(FieldAccountIds))
+}
+
+// AccountIdsNotNil applies the NotNil predicate on the "account_ids" field.
+func AccountIdsNotNil() predicate.ErrorPassthroughRule {
+	return predicate.ErrorPassthroughRule(sql.FieldNotNull(FieldAccountIds))
+}
+
 // PassthroughCodeEQ applies the EQ predicate on the "passthrough_code" field.
 func PassthroughCodeEQ(v bool) predicate.ErrorPassthroughRule {
 	return predicate.ErrorPassthroughRule(sql.FieldEQ(FieldPassthroughCode, v))

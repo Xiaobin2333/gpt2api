@@ -116,6 +116,12 @@ func (_c *ErrorPassthroughRuleCreate) SetPlatforms(v []string) *ErrorPassthrough
 	return _c
 }
 
+// SetAccountIds sets the "account_ids" field.
+func (_c *ErrorPassthroughRuleCreate) SetAccountIds(v []int64) *ErrorPassthroughRuleCreate {
+	_c.mutation.SetAccountIds(v)
+	return _c
+}
+
 // SetPassthroughCode sets the "passthrough_code" field.
 func (_c *ErrorPassthroughRuleCreate) SetPassthroughCode(v bool) *ErrorPassthroughRuleCreate {
 	_c.mutation.SetPassthroughCode(v)
@@ -371,6 +377,10 @@ func (_c *ErrorPassthroughRuleCreate) createSpec() (*ErrorPassthroughRule, *sqlg
 		_spec.SetField(errorpassthroughrule.FieldPlatforms, field.TypeJSON, value)
 		_node.Platforms = value
 	}
+	if value, ok := _c.mutation.AccountIds(); ok {
+		_spec.SetField(errorpassthroughrule.FieldAccountIds, field.TypeJSON, value)
+		_node.AccountIds = value
+	}
 	if value, ok := _c.mutation.PassthroughCode(); ok {
 		_spec.SetField(errorpassthroughrule.FieldPassthroughCode, field.TypeBool, value)
 		_node.PassthroughCode = value
@@ -564,6 +574,24 @@ func (u *ErrorPassthroughRuleUpsert) UpdatePlatforms() *ErrorPassthroughRuleUpse
 // ClearPlatforms clears the value of the "platforms" field.
 func (u *ErrorPassthroughRuleUpsert) ClearPlatforms() *ErrorPassthroughRuleUpsert {
 	u.SetNull(errorpassthroughrule.FieldPlatforms)
+	return u
+}
+
+// SetAccountIds sets the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsert) SetAccountIds(v []int64) *ErrorPassthroughRuleUpsert {
+	u.Set(errorpassthroughrule.FieldAccountIds, v)
+	return u
+}
+
+// UpdateAccountIds sets the "account_ids" field to the value that was provided on create.
+func (u *ErrorPassthroughRuleUpsert) UpdateAccountIds() *ErrorPassthroughRuleUpsert {
+	u.SetExcluded(errorpassthroughrule.FieldAccountIds)
+	return u
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsert) ClearAccountIds() *ErrorPassthroughRuleUpsert {
+	u.SetNull(errorpassthroughrule.FieldAccountIds)
 	return u
 }
 
@@ -845,6 +873,27 @@ func (u *ErrorPassthroughRuleUpsertOne) UpdatePlatforms() *ErrorPassthroughRuleU
 func (u *ErrorPassthroughRuleUpsertOne) ClearPlatforms() *ErrorPassthroughRuleUpsertOne {
 	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
 		s.ClearPlatforms()
+	})
+}
+
+// SetAccountIds sets the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsertOne) SetAccountIds(v []int64) *ErrorPassthroughRuleUpsertOne {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.SetAccountIds(v)
+	})
+}
+
+// UpdateAccountIds sets the "account_ids" field to the value that was provided on create.
+func (u *ErrorPassthroughRuleUpsertOne) UpdateAccountIds() *ErrorPassthroughRuleUpsertOne {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.UpdateAccountIds()
+	})
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsertOne) ClearAccountIds() *ErrorPassthroughRuleUpsertOne {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.ClearAccountIds()
 	})
 }
 
@@ -1308,6 +1357,27 @@ func (u *ErrorPassthroughRuleUpsertBulk) UpdatePlatforms() *ErrorPassthroughRule
 func (u *ErrorPassthroughRuleUpsertBulk) ClearPlatforms() *ErrorPassthroughRuleUpsertBulk {
 	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
 		s.ClearPlatforms()
+	})
+}
+
+// SetAccountIds sets the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsertBulk) SetAccountIds(v []int64) *ErrorPassthroughRuleUpsertBulk {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.SetAccountIds(v)
+	})
+}
+
+// UpdateAccountIds sets the "account_ids" field to the value that was provided on create.
+func (u *ErrorPassthroughRuleUpsertBulk) UpdateAccountIds() *ErrorPassthroughRuleUpsertBulk {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.UpdateAccountIds()
+	})
+}
+
+// ClearAccountIds clears the value of the "account_ids" field.
+func (u *ErrorPassthroughRuleUpsertBulk) ClearAccountIds() *ErrorPassthroughRuleUpsertBulk {
+	return u.Update(func(s *ErrorPassthroughRuleUpsert) {
+		s.ClearAccountIds()
 	})
 }
 

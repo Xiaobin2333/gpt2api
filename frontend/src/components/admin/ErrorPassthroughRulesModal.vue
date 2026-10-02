@@ -1,7 +1,7 @@
 <template>
   <BaseDialog
     :show="show"
-    :title="t('admin.errorPassthrough.title')"
+    :title="account ? `${t('admin.errorPassthrough.title')} · ${account.name} (#${account.id})` : t('admin.errorPassthrough.title')"
     width="extra-wide"
     @close="$emit('close')"
   >
@@ -11,7 +11,7 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('admin.errorPassthrough.description') }}
         </p>
-        <button @click="showCreateModal = true" class="btn btn-primary btn-sm">
+        <button @click="handleCreate" class="btn btn-primary btn-sm">
           <Icon name="plus" size="sm" class="mr-1" />
           {{ t('admin.errorPassthrough.createRule') }}
         </button>
@@ -22,7 +22,7 @@
         <Icon name="refresh" size="lg" class="animate-spin text-gray-400" />
       </div>
 
-      <div v-else-if="rules.length === 0" class="py-8 text-center">
+      <div v-else-if="visibleRules.length === 0" class="py-8 text-center">
         <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700">
           <Icon name="shield" size="lg" class="text-gray-400" />
         </div>
@@ -62,7 +62,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-800">
-            <tr v-for="rule in rules" :key="rule.id" class="hover:bg-gray-50 dark:hover:bg-dark-700">
+            <tr v-for="rule in visibleRules" :key="rule.id" class="hover:bg-gray-50 dark:hover:bg-dark-700">
               <td class="whitespace-nowrap px-3 py-2">
                 <span class="inline-flex h-5 w-5 items-center justify-center rounded bg-gray-100 text-xs font-medium text-gray-700 dark:bg-dark-600 dark:text-gray-300">
                   {{ rule.priority }}
@@ -70,6 +70,9 @@
               </td>
               <td class="px-3 py-2">
                 <div class="font-medium text-gray-900 dark:text-white text-sm">{{ rule.name }}</div>
+                <div class="mt-0.5 text-xs text-gray-500">
+                  {{ rule.account_ids?.length ? t('admin.errorPassthrough.accountScope', { ids: rule.account_ids.join(', ') }) : t('admin.errorPassthrough.globalScope') }}
+                </div>
                 <div v-if="rule.description" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 max-w-xs truncate">
                   {{ rule.description }}
                 </div>
@@ -322,6 +325,12 @@
           </div>
         </div>
 
+        <div>
+          <label for="passthrough-account-ids" class="input-label text-xs">{{ t('admin.errorPassthrough.form.accountIDs') }}</label>
+          <input id="passthrough-account-ids" v-model="accountIDsInput" class="input" :placeholder="t('admin.errorPassthrough.form.accountIDsPlaceholder')" />
+          <p class="input-hint text-xs">{{ t('admin.errorPassthrough.form.accountIDsHint') }}</p>
+        </div>
+
         <!-- Response Behavior -->
         <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
           <h4 class="mb-2 text-sm font-medium text-gray-900 dark:text-white">
@@ -442,6 +451,7 @@ import Icon from '@/components/icons/Icon.vue'
 
 const props = defineProps<{
   show: boolean
+  account?: { id: number; name: string; platform: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -455,6 +465,10 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const rules = ref<ErrorPassthroughRule[]>([])
+const visibleRules = computed(() => rules.value.filter(rule => !props.account || (
+  (!rule.account_ids?.length || rule.account_ids.includes(props.account.id)) &&
+  (!rule.platforms.length || rule.platforms.includes(props.account.platform))
+)))
 const loading = ref(false)
 const submitting = ref(false)
 const showCreateModal = ref(false)
@@ -466,6 +480,7 @@ const deletingRule = ref<ErrorPassthroughRule | null>(null)
 // Form inputs for arrays
 const errorCodesInput = ref('')
 const keywordsInput = ref('')
+const accountIDsInput = ref('')
 
 const form = reactive({
   name: '',
@@ -491,6 +506,7 @@ const platformOptions = CONCRETE_PLATFORM_OPTIONS
 // Load rules when dialog opens
 watch(() => props.show, (newVal) => {
   if (newVal) {
+    closeFormModal()
     loadRules()
   }
 })
@@ -521,6 +537,12 @@ const resetForm = () => {
   form.description = null
   errorCodesInput.value = ''
   keywordsInput.value = ''
+  accountIDsInput.value = props.account ? String(props.account.id) : ''
+}
+
+const handleCreate = () => {
+  resetForm()
+  showCreateModal.value = true
 }
 
 const closeFormModal = () => {
@@ -532,6 +554,7 @@ const closeFormModal = () => {
 
 const handleEdit = (rule: ErrorPassthroughRule) => {
   editingRule.value = rule
+  accountIDsInput.value = (rule.account_ids ?? []).join(', ')
   form.name = rule.name
   form.enabled = rule.enabled
   form.priority = rule.priority
@@ -570,6 +593,13 @@ const parseKeywords = (): string[] => {
 }
 
 const handleSubmit = async () => {
+  const accountIDs = accountIDsInput.value.trim()
+    ? accountIDsInput.value.trim().split(/[,，\s]+/).map(value => /^\d+$/.test(value) ? Number(value) : NaN)
+    : []
+  if (accountIDs.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    appStore.showError(t('admin.errorPassthrough.invalidAccountIDs'))
+    return
+  }
   if (!form.name.trim()) {
     appStore.showError(t('admin.errorPassthrough.nameRequired'))
     return
@@ -593,6 +623,7 @@ const handleSubmit = async () => {
       keywords: keywords,
       match_mode: form.match_mode,
       platforms: form.platforms,
+      account_ids: [...new Set(accountIDs)],
       passthrough_code: form.passthrough_code,
       response_code: form.passthrough_code ? null : form.response_code,
       passthrough_body: form.passthrough_body,

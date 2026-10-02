@@ -3493,7 +3493,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 
 	// 先检查透传规则
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule("openai", statusCode, responseBody); rule != nil {
+		if rule := h.errorPassthroughService.MatchRuleForRequest(c, "openai", statusCode, responseBody); rule != nil {
 			// 确定响应状态码
 			respCode := statusCode
 			if !rule.PassthroughCode && rule.ResponseCode != nil {
