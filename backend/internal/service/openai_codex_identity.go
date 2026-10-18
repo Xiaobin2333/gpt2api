@@ -549,7 +549,7 @@ func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 
 // buildCodexTUIUserAgentFromFingerprint keeps only the environment portion of
 // an official Codex-family UA. The outbound product identity is always the
-// 0.154.0 Codex TUI shape observed in codex-rs default_client + app-server.
+// 0.163.0 Codex TUI shape verified in codex-rs login/default_client + app-server.
 func buildCodexTUIUserAgentFromFingerprint(candidateUA, version string) (string, bool) {
 	version = NormalizeCodexClientVersion(version)
 	if version == "" {

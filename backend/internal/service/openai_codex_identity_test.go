@@ -117,10 +117,10 @@ func TestCodexOAuth01540SynthesizesOfficialResponsesIdentity(t *testing.T) {
 	require.Equal(t, ids.contextWindowID, gjson.Get(headers.Get(openAIWSTurnMetadataHeader), "context_window_id").String())
 }
 
-func TestCodexCLI01540CanonicalIdentity(t *testing.T) {
+func TestCodexCLI01630CanonicalIdentity(t *testing.T) {
 	require.Equal(t, "codex-tui", openai.CodexDefaultOriginator)
 	require.Equal(t,
-		"codex-tui/0.154.0 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.154.0)",
+		"codex-tui/0.163.0 (Debian 13.0.0; x86_64) xterm-256color (codex-tui; 0.163.0)",
 		codexCLIUserAgent,
 	)
 }

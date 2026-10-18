@@ -99,7 +99,7 @@ func (r *OpenAITokenRefresher) CanRefresh(account *Account) bool {
 }
 
 // NeedsRefresh 检查token是否需要刷新
-// expires_at 缺失且处于限流状态时需要刷新，防止限流期间 token 静默过期
+// 后台扫描和请求路径使用相同的到期与上游拒绝判定。
 func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time.Duration) bool {
 	if account.IsOpenAIPersonalAccessToken() {
 		return false
@@ -107,12 +107,11 @@ func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time
 	if strings.TrimSpace(account.GetOpenAIRefreshToken()) == "" {
 		return false
 	}
-	expiresAt := account.GetCredentialAsTime("expires_at")
-	if expiresAt == nil {
-		return account.IsRateLimited()
+	if openAITokenRefreshRequested(account) || strings.TrimSpace(account.GetOpenAIAccessToken()) == "" {
+		return true
 	}
-
-	return time.Until(*expiresAt) < refreshWindow
+	expiresAt := openAITokenExpiry(account)
+	return expiresAt == nil || time.Until(*expiresAt) <= refreshWindow
 }
 
 // Refresh 执行token刷新

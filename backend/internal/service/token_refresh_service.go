@@ -1183,6 +1183,10 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 			)
 		} else {
 			slog.Info("token_refresh.cleared_temp_unschedulable", "account_id", account.ID)
+			// Publish the recovered state rather than restoring the old cooldown
+			// in postRefreshStateSync's scheduler snapshot.
+			account.TempUnschedulableUntil = nil
+			account.TempUnschedulableReason = ""
 			s.notifyAccountSchedulingBlockCleared(account.ID)
 		}
 		// 同步清除 Redis 缓存，避免调度器读到过期的临时不可调度状态

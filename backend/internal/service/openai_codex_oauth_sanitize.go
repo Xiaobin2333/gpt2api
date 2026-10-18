@@ -25,7 +25,7 @@ var codexOAuthResponsesTopLevelFields = map[string]struct{}{
 	"tool_choice": {}, "parallel_tool_calls": {}, "reasoning": {},
 	"store": {}, "stream": {}, "stream_options": {}, "include": {},
 	"service_tier": {}, "prompt_cache_key": {}, "text": {},
-	"client_metadata": {},
+	"client_metadata": {}, "access_programs": {},
 }
 
 var codexOAuthWebSocketResponseCreateTopLevelFields = func() map[string]struct{} {

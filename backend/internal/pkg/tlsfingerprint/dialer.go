@@ -37,15 +37,18 @@ type Profile struct {
 	RandomizeExtensions bool     // Shuffle Extensions for each ClientHello (rustls behavior)
 }
 
-// CodexHTTPProfile returns the OpenSSL 3.x ClientHello captured from Codex CLI
-// 0.149.1 for OAuth token and chatgpt.com HTTP requests. Codex CLI 0.154.0 uses
-// the same relevant TLS dependency stack, so this wire profile remains current.
+// CodexHTTPProfile matches the official Linux musl Codex CLI 0.163.0
+// OpenSSL ClientHello, captured against a local TLS endpoint on 2026-10-18.
+// The login and Responses HTTP clients share this native TLS transport.
 func CodexHTTPProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.154.0-http",
+		Name: "codex-cli-0.163.0-http",
 		CipherSuites: []uint16{
-			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
-			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
+			0x1302, 0x1303, 0x1301, 0xc02c, 0xc030, 0x009f,
+			0xcca9, 0xcca8, 0xccaa, 0xc02b, 0xc02f, 0x009e,
+			0xc024, 0xc028, 0x006b, 0xc023, 0xc027, 0x0067,
+			0xc00a, 0xc014, 0x0039, 0xc009, 0xc013, 0x0033,
+			0x009d, 0x009c, 0x003d, 0x003c, 0x0035, 0x002f,
 		},
 		Curves: []uint16{
 			0x11ec, // X25519MLKEM768
@@ -87,13 +90,12 @@ func CodexHTTPProfile() *Profile {
 	}
 }
 
-// CodexWebSocketProfile returns the rustls/aws-lc ClientHello emitted by
-// Codex CLI 0.149.1 for Responses WebSocket connections. Codex CLI 0.154.0
-// uses the same relevant tokio-tungstenite/rustls stack; rustls deliberately
-// randomizes extension order for every handshake.
+// CodexWebSocketProfile matches the official Linux musl Codex CLI 0.163.0
+// rustls/aws-lc ClientHello captured on 2026-10-18. Extension order varies
+// between connections; the signature list includes the new ML-DSA schemes.
 func CodexWebSocketProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.154.0-websocket",
+		Name: "codex-cli-0.163.0-websocket",
 		CipherSuites: []uint16{
 			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
 			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,
@@ -103,6 +105,7 @@ func CodexWebSocketProfile() *Profile {
 		SignatureAlgorithms: []uint16{
 			0x0503, 0x0403, 0x0603, 0x0807, 0x0806,
 			0x0805, 0x0804, 0x0601, 0x0501, 0x0401,
+			0x0904, 0x0905, 0x0906,
 		},
 		SupportedVersions:   []uint16{utls.VersionTLS13, utls.VersionTLS12},
 		KeyShareGroups:      []uint16{0x11ec, 0x001d},

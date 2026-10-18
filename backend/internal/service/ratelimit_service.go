@@ -454,6 +454,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		}
 		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
 		openai401Code := extractUpstreamErrorCode(responseBody)
+		if openai401Code == "" && authAccount.Platform == PlatformOpenAI {
+			openai401Code = strings.TrimSpace(gjson.GetBytes(responseBody, "detail.code").String())
+		}
 		if authAccount.Platform == PlatformOpenAI && (openai401Code == "token_invalidated" || openai401Code == "token_revoked") {
 			msg := "Token revoked (401): account authentication permanently revoked"
 			if upstreamMsg != "" {
@@ -499,8 +502,8 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			// 在另一个 worker 刚刷新完 refresh_token 的窄窗口内会把新 refresh_token 回滚为旧值，
 			// 导致下一周期用旧 refresh_token 调上游拿到 invalid_grant 后，
 			// tryRecoverFromRefreshRace 重读 DB 发现 currentRT == usedRT 也救不回来，账号被错误 disable。
-			// 这里仅依赖 InvalidateToken + SetTempUnschedulable 让账号在冷却期内不被调度，
-			// 冷却结束后由 token_provider 的 NeedsRefresh / token_refresh_service 走带分布式锁的正路刷新。
+			// 可恢复的 token_expired 另写 Extra 刷新标记，由统一刷新入口在锁内重读凭据；
+			// 不能只冷却，否则错误/缺失的本地到期时间会让后台永远跳过刷新。
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "OAuth 401: " + upstreamMsg
@@ -517,6 +520,15 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 						authAccount.Extra[k] = v
 					}
 					slog.Info("antigravity_401_force_refresh_marked", "account_id", authAccount.ID)
+				}
+			}
+			if authAccount.Platform == PlatformOpenAI && openai401Code == "token_expired" && !authAccount.IsOpenAIPersonalAccessToken() {
+				// Only update Extra: never roll back a concurrently rotated refresh_token
+				// by saving the request's credential snapshot. A successful rotation's
+				// _token_version satisfies this marker on subsequent refresh checks.
+				updates := map[string]any{openAITokenRefreshRequestedAtKey: strconv.FormatInt(time.Now().UnixMilli(), 10)}
+				if err := s.accountRepo.UpdateExtra(ctx, authAccount.ID, updates); err != nil {
+					slog.Warn("openai_401_force_refresh_mark_failed", "account_id", authAccount.ID, "error", err)
 				}
 			}
 			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes

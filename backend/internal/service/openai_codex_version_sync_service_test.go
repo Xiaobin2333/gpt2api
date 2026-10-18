@@ -499,8 +499,8 @@ func TestGetOpenAICodexCanonicalUserAgentOutboundIdentity(t *testing.T) {
 		name, manual, synced, want string
 	}{
 		{"manual", "0.154.0", "0.155.1", "0.154.0"},
-		{"synced", "", "0.155.1", "0.155.1"},
-		{"invalid_manual", "latest", "0.155.1", "0.155.1"},
+		{"synced", "", "99.0.0", "99.0.0"},
+		{"invalid_manual", "latest", "99.0.0", "99.0.0"},
 		{"default", "", "", codexCLIVersion},
 		{"invalid_versions", "latest", "invalid", codexCLIVersion},
 	} {

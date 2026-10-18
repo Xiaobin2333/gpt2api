@@ -699,7 +699,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		return modified
 	}
 
-	// Official 0.154.0 always emits these client_metadata carriers. Synthesize
+	// Official 0.163.0 always emits these client_metadata carriers. Synthesize
 	// them for third-party clients as well as rewriting stale values.
 	modified = setCodexMetadataField(existing, "x-codex-installation-id", ids.installationID) || modified
 	modified = setCodexMetadataField(existing, "session_id", ids.sessionID) || modified
@@ -871,7 +871,7 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 }
 
 // rewriteClientMetadataEmbeddedTurnMetadata rewrites the canonical embedded
-// metadata snapshot and creates it when an official 0.154.0 carrier is absent.
+// metadata snapshot and creates it when an official 0.163.0 carrier is absent.
 func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) bool {
 	raw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	metadata := make(map[string]any, len(fields))

@@ -8,14 +8,15 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-func TestCodexHTTPProfileMatchesCLI01540(t *testing.T) {
+func TestCodexHTTPProfileMatchesCLI01630(t *testing.T) {
 	profile := CodexHTTPProfile()
-	if profile.Name != "codex-cli-0.154.0-http" {
+	if profile.Name != "codex-cli-0.163.0-http" {
 		t.Fatalf("profile name mismatch: got %q", profile.Name)
 	}
 	spec := buildClientHelloSpecFromProfile(profile)
 
-	wantCiphers := []uint16{0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b, 0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff}
+	// Recorded from the official binary, not derived from the profile under test.
+	wantCiphers := []uint16{4866, 4867, 4865, 49196, 49200, 159, 52393, 52392, 52394, 49195, 49199, 158, 49188, 49192, 107, 49187, 49191, 103, 49162, 49172, 57, 49161, 49171, 51, 157, 156, 61, 60, 53, 47}
 	wantExtensions := []uint16{0xff01, 0, 11, 10, 35, 22, 23, 13, 43, 45, 51}
 	wantCurves := []uint16{0x11ec, 0x001d, 0x0017, 0x001e, 0x0018, 0x0019, 0x0100, 0x0101}
 	wantKeyShares := []uint16{0x11ec, 0x001d}
@@ -34,14 +35,14 @@ func TestCodexHTTPProfileMatchesCLI01540(t *testing.T) {
 	assertNoALPN(t, spec.Extensions)
 }
 
-func TestCodexWebSocketProfileMatchesCLI01540AndRandomizesExtensions(t *testing.T) {
+func TestCodexWebSocketProfileMatchesCLI01630AndRandomizesExtensions(t *testing.T) {
 	profile := CodexWebSocketProfile()
-	if profile.Name != "codex-cli-0.154.0-websocket" {
+	if profile.Name != "codex-cli-0.163.0-websocket" {
 		t.Fatalf("profile name mismatch: got %q", profile.Name)
 	}
 	wantCiphers := []uint16{0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b, 0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff}
 	wantCurves := []uint16{0x11ec, 0x001d, 0x0017, 0x0018}
-	wantSignatures := []uint16{0x0503, 0x0403, 0x0603, 0x0807, 0x0806, 0x0805, 0x0804, 0x0601, 0x0501, 0x0401}
+	wantSignatures := []uint16{0x0503, 0x0403, 0x0603, 0x0807, 0x0806, 0x0805, 0x0804, 0x0601, 0x0501, 0x0401, 0x0904, 0x0905, 0x0906}
 	wantExtensionSet := extensionSet(profile.Extensions)
 
 	orders := make(map[string]struct{})
@@ -103,7 +104,7 @@ func assertNoALPN(t *testing.T, extensions []utls.TLSExtension) {
 	t.Helper()
 	for _, extension := range extensions {
 		if _, ok := extension.(*utls.ALPNExtension); ok {
-			t.Fatal("Codex 0.154.0 profile must not advertise ALPN")
+			t.Fatal("Codex 0.163.0 profile must not advertise ALPN")
 		}
 	}
 }
