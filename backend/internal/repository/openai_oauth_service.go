@@ -25,9 +25,10 @@ type openaiOAuthService struct {
 }
 
 type openAIRefreshRequest struct {
-	ClientID     string `json:"client_id"`
-	GrantType    string `json:"grant_type"`
-	RefreshToken string `json:"refresh_token"`
+	ClientID      string               `json:"client_id"`
+	GrantType     string               `json:"grant_type"`
+	RefreshReason openai.RefreshReason `json:"refresh_reason"`
+	RefreshToken  string               `json:"refresh_token"`
 }
 
 func (s *openaiOAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI, proxyURL, clientID string) (*openai.TokenResponse, error) {
@@ -94,9 +95,10 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 	}
 
 	requestBody := openAIRefreshRequest{
-		ClientID:     clientID,
-		GrantType:    "refresh_token",
-		RefreshToken: refreshToken,
+		ClientID:      clientID,
+		GrantType:     "refresh_token",
+		RefreshToken:  refreshToken,
+		RefreshReason: openai.RefreshReasonFromContext(ctx),
 	}
 
 	var tokenResp openai.TokenResponse

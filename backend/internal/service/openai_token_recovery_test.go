@@ -31,10 +31,12 @@ type openAIRecoveryClient struct {
 	calls    int
 	err      error
 	response *openai.TokenResponse
+	reason   openai.RefreshReason
 }
 
-func (s *openAIRecoveryClient) RefreshTokenWithClientID(_ context.Context, refreshToken, _, _ string) (*openai.TokenResponse, error) {
+func (s *openAIRecoveryClient) RefreshTokenWithClientID(ctx context.Context, refreshToken, _, _ string) (*openai.TokenResponse, error) {
 	s.calls++
+	s.reason = openai.RefreshReasonFromContext(ctx)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -52,6 +54,32 @@ func TestOpenAITokenRecovery_ResponseWithoutExpiresInUsesJWT(t *testing.T) {
 	info, err := oauth.RefreshAccountToken(context.Background(), openAIRecoveryAccount())
 	require.NoError(t, err)
 	require.Equal(t, expiresAt.Unix(), info.ExpiresAt)
+	require.Equal(t, openai.RefreshReasonForced, client.reason)
+}
+
+func TestOpenAITokenRecovery_ReportsAutomaticRefreshReason(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*Account)
+		want    openai.RefreshReason
+	}{
+		{"expiry", func(a *Account) { a.Credentials["expires_at"] = time.Now().Add(-time.Minute).Format(time.RFC3339) }, openai.RefreshReasonProactiveExpiry},
+		{"unknown expiry", func(a *Account) { delete(a.Credentials, "expires_at") }, openai.RefreshReasonScheduled},
+		{"rejected", func(a *Account) {
+			a.Extra = map[string]any{openAITokenRefreshRequestedAtKey: strconv.FormatInt(time.Now().UnixMilli(), 10)}
+		}, openai.RefreshReasonUnauthorizedRecovery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := openAIRecoveryAccount()
+			tc.prepare(a)
+			client := &openAIRecoveryClient{}
+			oauth := NewOpenAIOAuthService(nil, client)
+			defer oauth.Stop()
+			_, err := NewOpenAITokenRefresher(oauth, nil).Refresh(context.Background(), a)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, client.reason)
+		})
+	}
 }
 
 func TestOpenAITokenRecovery_MissingOrIncorrectExpiry(t *testing.T) {

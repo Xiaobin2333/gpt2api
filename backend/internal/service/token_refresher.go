@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // TokenRefresher 定义平台特定的token刷新策略接口
@@ -117,6 +119,13 @@ func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time
 // Refresh 执行token刷新
 // 保留原有credentials中的所有字段，只更新token相关字段
 func (r *OpenAITokenRefresher) Refresh(ctx context.Context, account *Account) (map[string]any, error) {
+	reason := openai.RefreshReasonScheduled
+	if openAITokenRefreshRequested(account) {
+		reason = openai.RefreshReasonUnauthorizedRecovery
+	} else if openAITokenExpiry(account) != nil {
+		reason = openai.RefreshReasonProactiveExpiry
+	}
+	ctx = openai.WithRefreshReason(ctx, reason)
 	tokenInfo, err := r.openaiOAuthService.RefreshAccountToken(ctx, account)
 	if err != nil {
 		return nil, err

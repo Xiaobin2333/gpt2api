@@ -8,9 +8,9 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-func TestCodexHTTPProfileMatchesCLI01630(t *testing.T) {
+func TestCodexHTTPProfileMatchesCLI01660(t *testing.T) {
 	profile := CodexHTTPProfile()
-	if profile.Name != "codex-cli-0.163.0-http" {
+	if profile.Name != "codex-cli-0.166.0-http" {
 		t.Fatalf("profile name mismatch: got %q", profile.Name)
 	}
 	spec := buildClientHelloSpecFromProfile(profile)
@@ -35,9 +35,9 @@ func TestCodexHTTPProfileMatchesCLI01630(t *testing.T) {
 	assertNoALPN(t, spec.Extensions)
 }
 
-func TestCodexWebSocketProfileMatchesCLI01630AndRandomizesExtensions(t *testing.T) {
+func TestCodexWebSocketProfileMatchesCLI01660AndRandomizesExtensions(t *testing.T) {
 	profile := CodexWebSocketProfile()
-	if profile.Name != "codex-cli-0.163.0-websocket" {
+	if profile.Name != "codex-cli-0.166.0-websocket" {
 		t.Fatalf("profile name mismatch: got %q", profile.Name)
 	}
 	wantCiphers := []uint16{0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b, 0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff}
@@ -104,7 +104,7 @@ func assertNoALPN(t *testing.T, extensions []utls.TLSExtension) {
 	t.Helper()
 	for _, extension := range extensions {
 		if _, ok := extension.(*utls.ALPNExtension); ok {
-			t.Fatal("Codex 0.163.0 profile must not advertise ALPN")
+			t.Fatal("Codex 0.166.0 profile must not advertise ALPN")
 		}
 	}
 }

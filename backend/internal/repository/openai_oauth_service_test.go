@@ -124,7 +124,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_JSONBody() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		wantBody := `{"client_id":"` + openai.ClientID + `","grant_type":"refresh_token","refresh_token":"rt"}`
+		wantBody := `{"client_id":"` + openai.ClientID + `","grant_type":"refresh_token","refresh_reason":"forced","refresh_token":"rt"}`
 		if got := string(body); got != wantBody {
 			errCh <- "body mismatch"
 			w.WriteHeader(http.StatusBadRequest)

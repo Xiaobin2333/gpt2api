@@ -46,7 +46,7 @@ func NormalizeCodexClientVersion(version string) string {
 	return version
 }
 
-// buildCodexCLIUserAgent 按版本号拼出规范 Codex TUI User-Agent。
+// buildCodexCLIUserAgent 按版本号拼出规范 Codex CLI User-Agent。
 // UA 形态只在 codexCLIUserAgentSuffix 一处定义，避免多处拼装漂移。
 func buildCodexCLIUserAgent(version string) string {
 	if version = NormalizeCodexClientVersion(version); version == "" {
@@ -58,7 +58,7 @@ func buildCodexCLIUserAgent(version string) string {
 
 // codexIdentityEnforcement 控制 enforceCodexIdentityHeaders 是否强制统一出站身份，
 // 由 gateway.disable_codex_identity_enforcement 在服务构造时取反发布。
-// 默认开启：上游在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到
+// 默认开启：上游会按客户端身份进行风控分层，命中风险身份的请求会拿到
 // HTTP 200 + 流内 server_is_overloaded，本次请求即失败；强制统一出口可确保没有
 // 请求带着第三方或陈旧身份出站。关闭后退回「仅按最终 UA 配对 originator」的收口语义。
 var codexIdentityEnforcement = func() *atomic.Bool {
@@ -377,6 +377,7 @@ func applyCodexOAuthTurnMetadataCompatibilityHeader(h http.Header, body []byte) 
 }
 
 var codexTurnMetadataFieldOrder = [...]string{
+	"guardian_recorded_items",
 	"installation_id",
 	"session_id",
 	"thread_id",
@@ -549,7 +550,7 @@ func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 
 // buildCodexTUIUserAgentFromFingerprint keeps only the environment portion of
 // an official Codex-family UA. The outbound product identity is always the
-// 0.163.0 Codex TUI shape verified in codex-rs login/default_client + app-server.
+// 0.166.0 Codex TUI shape verified in codex-rs login/default_client + app-server.
 func buildCodexTUIUserAgentFromFingerprint(candidateUA, version string) (string, bool) {
 	version = NormalizeCodexClientVersion(version)
 	if version == "" {

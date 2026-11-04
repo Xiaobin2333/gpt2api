@@ -339,6 +339,7 @@ func sanitizeCodexOAuthTurnMetadataString(raw string) string {
 }
 
 var codexOAuthAllowedTurnMetadataFields = map[string]struct{}{
+	"guardian_recorded_items":        {},
 	"installation_id":                {},
 	"session_id":                     {},
 	"thread_id":                      {},
@@ -398,7 +399,7 @@ func sanitizeCodexOAuthTurnMetadataMap(metadata map[string]any) bool {
 
 func sanitizeCodexOAuthTurnMetadataValue(key string, value any) (valid bool, changed bool) {
 	switch key {
-	case "auto_review_enabled", "node_repl_auto_review_required", "node_repl_disabled", "history_ingest_requested":
+	case "auto_review_enabled", "node_repl_auto_review_required", "node_repl_disabled", "history_ingest_requested", "guardian_recorded_items":
 		_, ok := value.(bool)
 		return ok, false
 	case "window_number", "forked_from_ordinal_exclusive":
