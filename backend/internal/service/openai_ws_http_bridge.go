@@ -449,6 +449,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if err != nil {
 		return nil, fmt.Errorf("prepare http bridge body: %w", err)
 	}
+	// WS ingress already converges each frame using its staged identity. Do not
+	// derive a second identity from those rewritten IDs. Direct bridge callers
+	// still need the persisted device and body-aware downstream session lookup.
+	if !account.UsesOpenAICodexProtocol() {
+		stageCodexFingerprintIDs(c, nil)
+	} else if stagedCodexFingerprintIDs(c, account) == nil {
+		body, err = prepareCodexOAuthFingerprintPayload(c, account, body, "", true)
+		if err != nil {
+			return nil, fmt.Errorf("apply http bridge codex fingerprint: %w", err)
+		}
+	}
 	grokIntentSourceBody := append([]byte(nil), body...)
 	_, grokExplicitToolsField := openAIWSHTTPBridgeRawField(grokIntentSourceBody, "tools")
 	grokExplicitToolIntent := account.Platform == PlatformGrok && hasGrokResponsesToolIntent(grokIntentSourceBody)
@@ -704,11 +715,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	if hasResponsesClientToolMapping(clientToolMapping) {
-		resp.Body = newResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
+		resp.Body = newResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize, s.cfg)
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
+	scanner.Split(newBoundedSSESplit(s.cfg, maxLineSize, nil))
 	defer putSSEScannerBuf64K(scanBuf)
 
 	pendingSSEEventType := ""

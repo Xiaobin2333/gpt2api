@@ -178,19 +178,23 @@ func TestRejectIfCyberSessionBlocked_FailOpen(t *testing.T) {
 	require.False(t, h2.rejectIfCyberSessionBlocked(c, key, []byte(`{}`), "gpt-5", cyberBlockFormatResponses), "nil gateway service → pass")
 }
 
-func TestBuildCyberSessionBlockWritePlanRequiresExplicitSession(t *testing.T) {
+func TestBuildCyberSessionBlockRequiresExplicitSession(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"},{"role":"user","content":"trigger"}]}`)
 	c := newTestGinContext()
 	c.Request = httptest.NewRequest("POST", "/openai/v1/responses", strings.NewReader(string(body)))
 	c.Request.RemoteAddr = "203.0.113.44:12345"
 	c.Request.Header.Set("User-Agent", "client/1.2.3")
 
-	plan := buildCyberSessionBlockWritePlan(7, c, body)
-	require.Empty(t, plan.keys)
+	block := buildCyberSessionBlock(7, c, body)
+	require.Empty(t, block.Keys)
+	require.Empty(t, block.ScopeKey)
+	require.Empty(t, block.TranscriptLengths)
 
 	c.Request.Header.Set("session_id", "sess-explicit")
-	plan = buildCyberSessionBlockWritePlan(7, c, body)
-	require.Len(t, plan.keys, 1)
+	block = buildCyberSessionBlock(7, c, body)
+	require.Len(t, block.Keys, 1)
+	require.Empty(t, block.ScopeKey)
+	require.Empty(t, block.TranscriptLengths)
 }
 
 func TestCyberSessionBlockSkipsCompactionRequests(t *testing.T) {
@@ -218,7 +222,7 @@ func TestCyberSessionBlockSkipsCompactionRequests(t *testing.T) {
 			c.Request = httptest.NewRequest("POST", tt.path, strings.NewReader(tt.body))
 
 			require.False(t, cyberSessionBlockEligible(c, body))
-			require.Empty(t, buildCyberSessionBlockWritePlan(7, c, body).keys)
+			require.Empty(t, buildCyberSessionBlock(7, c, body).Keys)
 		})
 	}
 
@@ -228,7 +232,7 @@ func TestCyberSessionBlockSkipsCompactionRequests(t *testing.T) {
 		c.Request = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(string(body)))
 
 		require.True(t, cyberSessionBlockEligible(c, body))
-		require.Len(t, buildCyberSessionBlockWritePlan(7, c, body).keys, 1)
+		require.Len(t, buildCyberSessionBlock(7, c, body).Keys, 1)
 	})
 }
 

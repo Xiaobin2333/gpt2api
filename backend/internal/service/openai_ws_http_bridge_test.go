@@ -2352,3 +2352,89 @@ func TestOpenAIWSHTTPBridge_IdleTimeoutClosesClientSession(t *testing.T) {
 	}
 	require.Len(t, upstream.bodies, 1, "an idle client must not leave a continuation request running")
 }
+
+func TestProxyOpenAIWSHTTPBridgeTurn_StagesCodexFingerprint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	run := func(account *Account) (*http.Request, []byte) {
+		sse := `data: {"type":"response.completed","response":{"id":"resp_fp","model":"gpt-5.5","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}}
+		svc := &OpenAIGatewayService{
+			cfg:          &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+			httpUpstream: upstream,
+		}
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		payload := []byte(`{"type":"response.create","model":"gpt-5.5","store":false,"input":"hi"}`)
+		_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+			context.Background(), c, account, "test-token", payload, len(payload),
+			"gpt-5.5", "", "", "", "", 1,
+			func([]byte) error { return nil },
+		)
+		require.NoError(t, err)
+		require.NotNil(t, upstream.lastReq)
+		require.Len(t, upstream.bodies, 1)
+		return upstream.lastReq, upstream.bodies[0]
+	}
+
+	full := newTestOAuthAccount(7101, map[string]any{"codex_fingerprint_mode": "full"})
+	ids := resolveCodexFingerprintIDsFromRequest(full, nil)
+	require.NotNil(t, ids)
+	first, firstBody := run(full)
+	require.Equal(t, ids.sessionID, first.Header.Get("session-id"))
+	require.Equal(t, ids.installationID, gjson.GetBytes(firstBody, "client_metadata.x-codex-installation-id").String())
+	require.Empty(t, first.Header.Get("session_id"))
+	require.Empty(t, first.Header.Get("x-codex-installation-id"))
+	// Full mode keeps account-level routing stable using the current CLI carriers.
+	second, _ := run(full)
+	require.Equal(t, first.Header.Get("session-id"), second.Header.Get("session-id"))
+
+	off := newTestOAuthAccount(7102, map[string]any{"codex_fingerprint_mode": "off"})
+	offRequest, _ := run(off)
+	require.Empty(t, offRequest.Header.Get("session-id"), "accounts without convergence get no synthetic session")
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurn_PreservesBodySessionIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := newTestOAuthAccount(7103, map[string]any{"codex_fingerprint_mode": "session"})
+	run := func(session string, alreadyConverged bool) (http.Header, []byte) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		payload := []byte(fmt.Sprintf(`{"type":"response.create","model":"gpt-5.6-sol","input":"hi","client_metadata":{"session_id":%q}}`, session))
+		if alreadyConverged {
+			var err error
+			payload, err = prepareCodexOAuthFingerprintPayload(c, account, payload, "", true)
+			require.NoError(t, err)
+		}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fp\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")),
+		}}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+		_, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "test-token", payload, len(payload),
+			"gpt-5.6-sol", "", "", "", "", 1, func([]byte) error { return nil })
+		require.NoError(t, err)
+		require.Len(t, upstream.bodies, 1)
+		headers, body := upstream.lastReq.Header, upstream.bodies[0]
+		require.Equal(t, headers.Get("session-id"), gjson.GetBytes(body, "client_metadata.session_id").String())
+		if alreadyConverged {
+			require.Equal(t, gjson.GetBytes(payload, "client_metadata").Raw, gjson.GetBytes(body, "client_metadata").Raw,
+				"bridge must not derive a second identity or turn from an already converged WS frame")
+		}
+		return headers, body
+	}
+	first, firstBody := run("downstream-a", false)
+	repeated, _ := run("downstream-a", false)
+	staged, _ := run("downstream-a", true)
+	other, otherBody := run("downstream-b", false)
+	require.NotEmpty(t, first.Get("session-id"))
+	require.Equal(t, first.Get("session-id"), repeated.Get("session-id"))
+	require.Equal(t, first.Get("session-id"), staged.Get("session-id"))
+	require.NotEqual(t, first.Get("session-id"), other.Get("session-id"))
+	require.Equal(t, gjson.GetBytes(firstBody, "client_metadata.x-codex-installation-id").String(),
+		gjson.GetBytes(otherBody, "client_metadata.x-codex-installation-id").String())
+}
