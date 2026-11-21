@@ -56,8 +56,12 @@ func (r *batchAccountQueryRepo) ListSchedulableUngroupedByPlatforms(_ context.Co
 	return r.run(batchAccountQueryKey{platform: platforms[0], mixed: true})
 }
 
-func (r *batchAccountQueryRepo) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
-	panic("unexpected ListModelAvailabilityCandidates call")
+func (r *batchAccountQueryRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, _ bool) ([]Account, error) {
+	key := batchAccountQueryKey{platform: platforms[0], mixed: len(platforms) > 1}
+	if groupID != nil {
+		key.groupID = *groupID
+	}
+	return r.run(key)
 }
 
 func (r *batchAccountQueryRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]Account, error) {
@@ -522,6 +526,29 @@ func TestSchedulerRebuildBatchKeepsSimpleModeBucketGroupsIndependent(t *testing.
 	require.Equal(t, 1, repo.callCount(batchAccountQueryKey{platform: PlatformOpenAI}))
 }
 
+func TestSimpleExplicitGroupSnapshotFiltersTransientCooldown(t *testing.T) {
+	groupID := int64(204)
+	key := batchAccountQueryKey{groupID: groupID, platform: PlatformOpenAI}
+	ready := Account{ID: 12, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}
+	cooling := ready
+	cooling.ID = 13
+	until := time.Now().Add(time.Hour)
+	cooling.RateLimitResetAt = &until
+	repo := newBatchAccountQueryRepo()
+	repo.results[key] = []batchAccountQueryResult{{accounts: []Account{cooling, ready}}}
+	other := ready
+	other.ID = 99
+	cache := &transientExpirySnapshotCache{hit: true, accounts: []*Account{&other}}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Gateway.Scheduling.DbFallbackEnabled = true
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, cfg)
+
+	accounts, _, err := svc.ListSchedulableAccounts(context.Background(), &groupID, PlatformOpenAI, false)
+	require.NoError(t, err)
+	require.Equal(t, []Account{ready}, accounts)
+	require.Equal(t, 1, repo.callCount(key))
+}
+
 func TestSchedulerRebuildBatchDoesNotCacheMixedOrHistoricalQueries(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -726,7 +753,7 @@ type batchQueryBenchmarkRepo struct {
 	accounts []Account
 }
 
-func (r *batchQueryBenchmarkRepo) ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]Account, error) {
+func (r *batchQueryBenchmarkRepo) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
 	return r.accounts, nil
 }
 

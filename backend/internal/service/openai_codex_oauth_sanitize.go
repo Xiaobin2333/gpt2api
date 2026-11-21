@@ -24,7 +24,7 @@ var codexOAuthResponsesTopLevelFields = map[string]struct{}{
 	"model": {}, "instructions": {}, "input": {}, "tools": {},
 	"tool_choice": {}, "parallel_tool_calls": {}, "reasoning": {},
 	"store": {}, "stream": {}, "stream_options": {}, "include": {},
-	"service_tier": {}, "prompt_cache_key": {}, "text": {},
+	"service_tier": {}, "prompt_cache_key": {}, "prompt_cache_options": {}, "text": {},
 	"client_metadata": {}, "access_programs": {},
 }
 
@@ -114,6 +114,24 @@ func sanitizeCodexOAuthRequestMap(payload map[string]any) bool {
 		return false
 	}
 	changed := sanitizeCodexOAuthBlockedKeys(payload)
+	// Only a trusted host can set request_country. Omission leaves provenance
+	// to the server, including when a downstream client supplies explicit null.
+	if _, exists := payload["request_country"]; exists {
+		delete(payload, "request_country")
+		changed = true
+	}
+	if raw, exists := payload["prompt_cache_options"]; exists {
+		options, _ := raw.(map[string]any)
+		ttl, _ := options["ttl"].(string)
+		switch {
+		case ttl != "30m" && ttl != "12h":
+			delete(payload, "prompt_cache_options")
+			changed = true
+		case len(options) != 1:
+			payload["prompt_cache_options"] = map[string]any{"ttl": ttl}
+			changed = true
+		}
+	}
 	for key, value := range payload {
 		switch normalizeCodexOAuthFieldName(key) {
 		case "metadata", "credential_extras", "credentials", "x_codex_turn_metadata":

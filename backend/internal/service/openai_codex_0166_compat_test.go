@@ -20,12 +20,26 @@ func TestCodex0166AccessProgramsSurviveOAuthSanitization(t *testing.T) {
 	}
 }
 
-func TestCodex0166CompiledBaselineWithAutoSyncDisabled(t *testing.T) {
+func TestCodexStableCompiledBaselineWithAutoSyncDisabled(t *testing.T) {
 	svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexVersionAutoSyncEnabled: "false",
-		SettingKeyOpenAICodexClientVersionSynced:    "0.163.0",
+		SettingKeyOpenAICodexClientVersionSynced:    "0.166.0",
 	}}, nil)
-	require.Equal(t, "0.166.0", svc.GetOpenAICodexClientVersion(context.Background()))
+	require.Equal(t, "0.171.0", svc.GetOpenAICodexClientVersion(context.Background()))
+}
+
+func TestCodex0171PromptCacheOptions(t *testing.T) {
+	for _, schema := range []codexOAuthRequestSchema{codexOAuthRequestSchemaResponses, codexOAuthRequestSchemaWebSocketResponseCreate, codexOAuthRequestSchemaCompact} {
+		for _, ttl := range []string{"30m", "12h", "unsupported"} {
+			body, _ := sanitizeCodexOAuthJSONBodyForSchema([]byte(`{"prompt_cache_options":{"ttl":"`+ttl+`","local_secret":true},"request_country":null}`), schema)
+			require.False(t, gjson.GetBytes(body, "request_country").Exists())
+			if schema == codexOAuthRequestSchemaCompact || ttl == "unsupported" {
+				require.False(t, gjson.GetBytes(body, "prompt_cache_options").Exists())
+			} else {
+				require.JSONEq(t, `{"ttl":"`+ttl+`"}`, gjson.GetBytes(body, "prompt_cache_options").Raw)
+			}
+		}
+	}
 }
 
 func TestCodex0166GuardianMetadata(t *testing.T) {

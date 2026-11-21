@@ -440,6 +440,8 @@ type codexFingerprintIDs struct {
 	turnStartedAtUnixMs           int64
 	originalBodySessionID         string
 	originalBodySessionIDCaptured bool
+	scopedHeaderSessionID         string
+	forkBodySessionID             string
 }
 
 // resolveCodexFingerprintIDs 按收敛模式计算出站 ID 集合。
@@ -559,7 +561,11 @@ func resolveCodexFingerprintIDsForPayload(c *gin.Context, account *Account, clie
 			clientSessionID = fmt.Sprintf("downstream-api-key:%d", apiKeyID)
 		}
 	}
-	return resolveCodexFingerprintIDs(identitySource, clientSessionID, mode)
+	ids := resolveCodexFingerprintIDs(identitySource, clientSessionID, mode)
+	if ids != nil && mode == codexFingerprintSession {
+		ids.scopedHeaderSessionID = scopeCodexAccountIdentityValue(identitySource, getAPIKeyIDFromContext(c), "session", extractClientSessionID(clientHeaders))
+	}
+	return ids
 }
 
 // resolveCodexFingerprintIDsForWSTurn keeps the first WS frame and handshake
@@ -571,6 +577,7 @@ func resolveCodexFingerprintIDsForWSTurn(c *gin.Context, account *Account, turn 
 			return ids
 		}
 		next := *ids
+		next.originalBodySessionIDCaptured, next.originalBodySessionID, next.forkBodySessionID = false, "", ""
 		next.turnID = uuid.Must(uuid.NewV7()).String()
 		next.turnStartedAtUnixMs = time.Now().UnixMilli()
 		return &next
@@ -661,6 +668,8 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	}
 
 	captureCodexFingerprintOriginalBodySessionID(ids, reqBody["client_metadata"])
+	key, _ := reqBody["prompt_cache_key"].(string)
+	ids.observeForkCacheKey(key)
 	existing, _ := reqBody["client_metadata"].(map[string]any)
 	if existing == nil && (ids.mode == codexFingerprintSession || ids.mode == codexFingerprintFull) {
 		existing = make(map[string]any, 6)
@@ -702,14 +711,18 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	// Official 0.163.0 always emits these client_metadata carriers. Synthesize
 	// them for third-party clients as well as rewriting stale values.
 	modified = setCodexMetadataField(existing, "x-codex-installation-id", ids.installationID) || modified
-	modified = setCodexMetadataField(existing, "session_id", ids.sessionID) || modified
+	bodySessionID := ids.sessionID
+	if ids.forkBodySessionID != "" {
+		bodySessionID = ids.forkBodySessionID
+	}
+	modified = setCodexMetadataField(existing, "session_id", bodySessionID) || modified
 	modified = setCodexMetadataField(existing, "thread_id", ids.threadID) || modified
 	modified = setCodexMetadataField(existing, "turn_id", ids.turnID) || modified
 	modified = setCodexMetadataField(existing, "x-codex-window-id", ids.windowID) || modified
 
 	modified = rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
 		"installation_id":         ids.installationID,
-		"session_id":              ids.sessionID,
+		"session_id":              bodySessionID,
 		"thread_id":               ids.threadID,
 		"agent_name":              "/root",
 		"turn_id":                 ids.turnID,
@@ -770,6 +783,14 @@ func captureCodexFingerprintOriginalBodySessionIDRaw(ids *codexFingerprintIDs, v
 	}
 }
 
+// A fork shares the parent's header and cache key, but its body names the child.
+// Compare in the account namespace so custom cache keys remain independent.
+func (ids *codexFingerprintIDs) observeForkCacheKey(key string) {
+	if key != "" && key == ids.scopedHeaderSessionID && ids.originalBodySessionID != key {
+		ids.forkBodySessionID = ids.originalBodySessionID
+	}
+}
+
 func shouldRewriteCodexFingerprintPromptCacheKey(ids *codexFingerprintIDs, promptCacheKey string) bool {
 	if ids == nil || !ids.originalBodySessionIDCaptured || ids.sessionID == "" || strings.TrimSpace(promptCacheKey) == "" {
 		return false
@@ -784,7 +805,7 @@ func shouldRewriteCodexFingerprintPromptCacheKey(ids *codexFingerprintIDs, promp
 	if ids.originalBodySessionID == "" {
 		return true
 	}
-	return promptCacheKey == ids.originalBodySessionID
+	return promptCacheKey == ids.originalBodySessionID || (ids.forkBodySessionID != "" && promptCacheKey == ids.scopedHeaderSessionID)
 }
 
 func applyCodexFingerprintPromptCacheKey(reqBody map[string]any, ids *codexFingerprintIDs) bool {
@@ -836,6 +857,8 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 		captureCodexFingerprintOriginalBodySessionIDRaw(ids, gjson.Result{})
 	}
 
+	promptCacheKey := gjson.GetBytes(body, "prompt_cache_key")
+	ids.observeForkCacheKey(promptCacheKey.String())
 	next := body
 	modified := false
 	if applyCodexFingerprintToClientMetadataMap(existing, ids) {
@@ -850,7 +873,6 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 		}
 		modified = true
 	}
-	promptCacheKey := gjson.GetBytes(body, "prompt_cache_key")
 	if (!promptCacheKey.Exists() || promptCacheKey.Type != gjson.String || strings.TrimSpace(promptCacheKey.String()) == "") &&
 		ids.sessionID != "" && (ids.mode == codexFingerprintSession || ids.mode == codexFingerprintFull) {
 		rewritten, err := sjson.SetBytes(next, "prompt_cache_key", ids.sessionID)
