@@ -400,6 +400,7 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
 			SettingKeyOpenAICodexClientVersion,
 			SettingKeyOpenAICodexClientVersionSynced,
+			SettingKeyOpenAICodexVersionAutoSyncEnabled,
 		})
 		if err != nil {
 			slog.Warn("failed to get openai codex client version setting", "error", err)
@@ -410,13 +411,14 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 			return fallback, nil
 		}
 		version := NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersion])
-		if version == "" {
+		if version == "" && codexVersionAutoSyncEnabled(values[SettingKeyOpenAICodexVersionAutoSyncEnabled]) {
 			version = NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersionSynced])
-			// A stale persisted auto-sync value must never downgrade a newer build.
-			// This keeps the compiled release usable when auto-sync is disabled.
-			if version == "" || CompareVersions(version, fallback) < 0 {
+			if version != "" && CompareVersions(version, fallback) < 0 {
 				version = fallback
 			}
+		}
+		if version == "" {
+			version = fallback
 		}
 		s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
 			version:   version,

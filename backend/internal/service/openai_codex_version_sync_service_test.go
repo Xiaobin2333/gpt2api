@@ -329,12 +329,17 @@ func TestGetOpenAICodexClientVersionFallsBackOnError(t *testing.T) {
 }
 
 func TestGetOpenAICodexClientVersionUsesCompiledBaselineWhenAutoSyncDisabled(t *testing.T) {
-	svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+	repo := &codexVersionSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexVersionAutoSyncEnabled: "false",
-		SettingKeyOpenAICodexClientVersionSynced:    "0.146.0",
-	}}, nil)
+		SettingKeyOpenAICodexClientVersionSynced:    "9.9.9",
+	}}
+	svc := NewSettingService(repo, nil)
+	ctx := context.Background()
+	require.Equal(t, codexCLIVersion, svc.GetOpenAICodexClientVersion(ctx))
 
-	require.Equal(t, codexCLIVersion, svc.GetOpenAICodexClientVersion(context.Background()))
+	repo.values[SettingKeyOpenAICodexClientVersion] = "0.166.0"
+	svc.InvalidateOpenAICodexClientVersionCache()
+	require.Equal(t, "0.166.0", svc.GetOpenAICodexClientVersion(ctx))
 }
 
 // 规范 UA：面板未填完整 UA 时按当前生效版本号拼出标准 TUI 形态。

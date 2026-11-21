@@ -37,12 +37,12 @@ type Profile struct {
 	RandomizeExtensions bool     // Shuffle Extensions for each ClientHello (rustls behavior)
 }
 
-// CodexHTTPProfile matches the official Linux musl Codex CLI 0.166.0
-// OpenSSL ClientHello, captured against a local TLS endpoint on 2026-11-05.
-// The login and Responses HTTP clients share this native TLS transport.
+// CodexHTTPProfile matches the default system-trust HTTPS ClientHello from
+// Linux x86_64 musl Codex CLI 0.171.0 (loopback verification, 2026-11-21).
+// An explicit custom CA can select a different HTTPS transport in the CLI.
 func CodexHTTPProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.166.0-http",
+		Name: "codex-cli-0.171.0-http",
 		CipherSuites: []uint16{
 			0x1302, 0x1303, 0x1301, 0xc02c, 0xc030, 0x009f,
 			0xcca9, 0xcca8, 0xccaa, 0xc02b, 0xc02f, 0x009e,
@@ -90,12 +90,11 @@ func CodexHTTPProfile() *Profile {
 	}
 }
 
-// CodexWebSocketProfile matches the official Linux musl Codex CLI 0.166.0
-// rustls/aws-lc ClientHello captured on 2026-11-05. Extension order varies
-// between connections; the signature list includes the new ML-DSA schemes.
+// CodexWebSocketProfile matches the WSS ClientHello from Linux x86_64 musl
+// Codex CLI 0.171.0 (loopback verification, 2026-11-21). Order varies per connection.
 func CodexWebSocketProfile() *Profile {
 	return &Profile{
-		Name: "codex-cli-0.166.0-websocket",
+		Name: "codex-cli-0.171.0-websocket",
 		CipherSuites: []uint16{
 			0x1302, 0x1301, 0x1303, 0xc02c, 0xc02b,
 			0xcca9, 0xc030, 0xc02f, 0xcca8, 0x00ff,

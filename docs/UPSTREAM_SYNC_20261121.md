@@ -16,6 +16,20 @@ Merged `Wei-Shaw/sub2api` `328db26f4` (v0.2.24) into private main at
   `request_country`, so provenance stays with the server.
 - A Codex fork can share its parent's cache key while retaining a distinct
   body session in both HTTP forwarding modes. No persisted identity seed or
-  configuration is rotated by this change. The existing TLS profiles retain
-  the version of their original capture; they are not a new 0.171.0 capture.
+  configuration is rotated by this change.
 - The private Docker workflow remains self-hosted and `linux/amd64` only.
+
+## Codex transport verification
+
+On 2026-11-21 the official Linux x86_64 musl `codex-cli 0.171.0` completed
+both a Responses SSE turn and a WebSocket `response.create` turn against an
+isolated loopback TLS server. The executable from `@openai/codex@0.171.0-linux-x64`
+had SHA-256 `b76a027d6b210f9a8da7aaf321dd235c700f0ef7a794d4a5314b9af6c134f0f0`.
+Both negotiated TLS 1.3. With the test CA in
+the system trust store and no CA environment override, the gateway dialers
+matched the CLI's stable ClientHello fields: version, session ID length,
+cipher suites, compression, and extension values (key shares compared by group
+and length). HTTP extension order also matched; WSS order varies by design.
+No handshake parameters changed. With an explicit CA override the CLI's HTTPS
+ClientHello differed, so the default profile does not describe that mode. No
+production accounts or upstream model entitlements were exercised.

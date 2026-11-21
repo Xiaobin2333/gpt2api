@@ -183,10 +183,12 @@ func (s *OpenAICodexVersionSyncService) autoSyncEnabled(ctx context.Context) boo
 	if err != nil {
 		return true
 	}
-	if strings.TrimSpace(value) == "" {
-		return true
-	}
-	return strings.TrimSpace(value) == "true"
+	return codexVersionAutoSyncEnabled(value)
+}
+
+func codexVersionAutoSyncEnabled(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == "true"
 }
 
 func (s *OpenAICodexVersionSyncService) currentSyncedVersion(ctx context.Context) string {

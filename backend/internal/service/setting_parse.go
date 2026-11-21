@@ -929,11 +929,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAICodexClientVersion = NormalizeCodexClientVersion(settings[SettingKeyOpenAICodexClientVersion])
 	result.OpenAICodexClientVersionSynced = NormalizeCodexClientVersion(settings[SettingKeyOpenAICodexClientVersionSynced])
 	// 自动同步默认开启：缺失/空值一律视为开启，与 enable_client_dateline_normalization 同一惯例。
-	if v, ok := settings[SettingKeyOpenAICodexVersionAutoSyncEnabled]; ok && v != "" {
-		result.OpenAICodexVersionAutoSyncEnabled = v == "true"
-	} else {
-		result.OpenAICodexVersionAutoSyncEnabled = true
-	}
+	result.OpenAICodexVersionAutoSyncEnabled = codexVersionAutoSyncEnabled(settings[SettingKeyOpenAICodexVersionAutoSyncEnabled])
 	result.ClaudeCodeClientVersion = NormalizeClaudeCodeClientVersion(settings[SettingKeyClaudeCodeClientVersion])
 	result.ClaudeCodeClientVersionSynced = NormalizeClaudeCodeClientVersion(settings[SettingKeyClaudeCodeClientVersionSynced])
 	// 自动同步默认开启：缺失/空值一律视为开启，与 openai_codex_version_auto_sync_enabled 同一惯例。
